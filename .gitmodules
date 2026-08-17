@@ -1,0 +1,3 @@
+[submodule "app/nanobot"]
+	path = app/nanobot
+	url = https://github.com/fuhang23/nanobot.git

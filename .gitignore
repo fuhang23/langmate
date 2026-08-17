@@ -1,0 +1,27 @@
+# ==== 密钥（绝对不能提交）====
+.env
+*.env.local
+
+# ==== Python 运行产物 ====
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# ==== nanobot 构建产物 / 前端依赖 ====
+app/nanobot/nanobot/web/dist/
+app/nanobot/webui/node_modules/
+app/nanobot/.venv/
+
+# ==== WorkBuddy 工具的项目数据（含个人记录，忽略）====
+.workbuddy/
+
+# ==== 本地资料知识库（版权资料，不提交）====
+app/workspace/knowledge/
+
+# ==== 系统 / 编辑器 ====
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -1,0 +1,85 @@
+topic: "中国权威托福培训机构现状与产品形态/用户交互方式调研（面向新托福备考智能体助手设计）"
+slug: "toefl_prep_competitive_research"
+generated_at: "2026-08-17"
+time_range: "近6个月；涉及2026新托福改革背景时可回溯2024年至今，但结论以近6个月公开信息为准"
+research_brief:
+  business_background: "用户是备考2026后改革版新托福的学生，同时也是智能体开发者，计划先做托福备考智能体助手，后续扩展其他功能。"
+  core_questions:
+    - "中国权威托福机构现在通过哪些产品形态服务新托福备考？"
+    - "它们的核心用户交互闭环是什么：测评、规划、学习、练习、模考、批改、督学、报告、转化？"
+    - "AI能力在口语、写作、诊断、推荐、问答助教、预测分中如何落地？"
+    - "哪些机制适合借鉴到一个学生自用/可扩展的智能体助手，哪些应差异化或避免？"
+  research_type: "竞品分析 + 产品形态/用户交互扫描"
+  decision_use: "确定智能体助手的产品形态、核心交互流程、MVP能力边界、差异化机会与验证指标"
+  output_language: "zh-CN"
+execution:
+  batch_size: 5
+  items_per_agent: 2
+  output_dir: "./results"
+  agent_type: "web-search-agent"
+  require_sources: true
+  label_uncertainty: true
+items:
+  - id: "item_01"
+    name: "新东方/新东方在线"
+    category: "综合语培头部"
+    priority: "P0"
+    focus: ["托福Pro App", "26年改革新题练习", "NOBLE/OMS智能平台", "线下班课/封闭营/一对一"]
+    why: "品牌权威度高，线上App与线下OMO并存，是观察传统头部如何产品化与数据化督学的核心样本。"
+  - id: "item_02"
+    name: "新航道"
+    category: "综合语培头部"
+    priority: "P0"
+    focus: ["托福分层课程", "新托福1-6分制解读", "线上/线下班型", "留学语培联动"]
+    why: "出国语培头部，改革解读与分层短期课有代表性，可用于对比课程包装与转化链路。"
+  - id: "item_03"
+    name: "新通教育"
+    category: "机构自研AI平台"
+    priority: "P0"
+    focus: ["SMARTER智能学习系统", "躺着学AI平台", "数智小新", "ETS合作/体验日"]
+    why: "近6个月在AI平台、过程数据采集、数字人考官与AI批改上声量高，是机构AI化转型标杆。"
+  - id: "item_04"
+    name: "学而思国际（原考满分）"
+    category: "题库/模考/在线工具"
+    priority: "P0"
+    focus: ["新托福专区", "全真自适应模考", "Si-Rater口写机评", "会员制与题库规模"]
+    why: "原考满分品牌升级，题库、模考与机评能力直接对标智能体助手的练习与评分模块。"
+  - id: "item_05"
+    name: "小站教育"
+    category: "在线语培/题库工具"
+    priority: "P1"
+    focus: ["托福在线课程", "题库/模考", "一对一/班课", "App学习流程"]
+    why: "在线托福培训代表，适合观察题库、课程与辅导服务如何组合。"
+  - id: "item_06"
+    name: "学为贵"
+    category: "在线出国考试培训"
+    priority: "P1"
+    focus: ["托福/雅思课程", "App化学习", "名师/内容营销", "批改与督学"]
+    why: "在线化程度较高，内容与名师驱动明显，可对比内容型转化与学习计划设计。"
+  - id: "item_07"
+    name: "启德考培"
+    category: "留学机构旗下考培"
+    priority: "P1"
+    focus: ["考培+留学申请联动", "规划型销售", "班课/一对一", "背景提升入口"]
+    why: "代表考培被嵌入留学规划链路的产品形态，对智能体助手是否连接申请规划有参考价值。"
+  - id: "item_08"
+    name: "啄木鸟教育"
+    category: "高端美本/规划联动"
+    priority: "P2"
+    focus: ["美本规划", "托福培训", "高端一对一", "长期督学"]
+    why: "高端客单价与长周期服务样本，可用于判断智能体在高介入服务中的替代边界。"
+  - id: "item_09"
+    name: "ETS官方渠道"
+    category: "官方/评分金标准"
+    priority: "P0"
+    focus: ["TOEFL TestReady", "TOEFL Go!", "官方样题/政策", "SpeechRater/e-rater逻辑对标"]
+    why: "官方资源与同源评分逻辑是智能体助手评分校准、题型覆盖与权威性表达的对标基准。"
+  - id: "item_10"
+    name: "AI原生与新物种组合"
+    category: "AI工具/新锐机构/免费生态"
+    priority: "P0"
+    focus: ["多次元教育", "LingoLeap", "Gabble.ai", "PrepEx/Petra AI", "Magoosh", "B站/小红书免费内容生态"]
+    why: "直接揭示2026后AI原生备考交互、积分制微交易、邀请裂变与自学替代供给，对智能体助手启发最强。"
+notes:
+  - "环球教育、朗阁教育、新通之外的区域强校可作为补充样本；若10个主对象证据不足，可在后续用 /research-add-items 追加。"
+  - "所有结论需区分：官方/机构自述、第三方测评、用户口碑、模型推断。"
