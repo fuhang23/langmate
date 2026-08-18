@@ -1,0 +1,29 @@
+[project]
+name = "langmate"
+version = "0.1.0"
+description = "LangMate: AI 英语学习搭子（基于 nanobot 二次开发）"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.27",
+]
+
+# 把 app/ 下的 services/ 与 tools/ 作为顶层包安装（editable），
+# 使 services.* 与 tools.* 可从任意目录 import。
+[tool.setuptools]
+packages = [
+    "services",
+    "services.tts",
+    "services.pronunciation",
+    "services.cefr",
+    "services.orchestration",
+    "tools",
+]
+
+# LangMate 自定义工具注册入口：nanobot ToolLoader 经 entry_points 自动发现。
+[project.entry-points."nanobot.tools"]
+langmate_speak = "tools.speak_tool:SpeakTool"
+langmate_analyze_speech = "tools.analyze_speech_tool:AnalyzeSpeechTool"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

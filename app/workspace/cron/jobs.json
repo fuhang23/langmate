@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "jobs": [
+    {
+      "id": "dream",
+      "name": "dream",
+      "enabled": true,
+      "schedule": {
+        "kind": "every",
+        "atMs": null,
+        "everyMs": 7200000,
+        "expr": null,
+        "tz": null
+      },
+      "payload": {
+        "kind": "system_event",
+        "message": "",
+        "deliver": false,
+        "channel": null,
+        "to": null,
+        "channelMeta": {},
+        "sessionKey": null,
+        "originChannel": null,
+        "originChatId": null,
+        "originMetadata": {}
+      },
+      "state": {
+        "nextRunAtMs": 1787051335484,
+        "lastRunAtMs": null,
+        "lastStatus": null,
+        "lastError": null,
+        "runHistory": []
+      },
+      "createdAtMs": 1787044135443,
+      "updatedAtMs": 1787044135443,
+      "deleteAfterRun": false
+    },
+    {
+      "id": "heartbeat",
+      "name": "heartbeat",
+      "enabled": true,
+      "schedule": {
+        "kind": "every",
+        "atMs": null,
+        "everyMs": 1800000,
+        "expr": null,
+        "tz": "Asia/Shanghai"
+      },
+      "payload": {
+        "kind": "system_event",
+        "message": "",
+        "deliver": false,
+        "channel": null,
+        "to": null,
+        "channelMeta": {},
+        "sessionKey": null,
+        "originChannel": null,
+        "originChatId": null,
+        "originMetadata": {}
+      },
+      "state": {
+        "nextRunAtMs": 1787051335516,
+        "lastRunAtMs": 1787049535515,
+        "lastStatus": "ok",
+        "lastError": null,
+        "runHistory": [
+          {
+            "runAtMs": 1787045935486,
+            "status": "ok",
+            "durationMs": 0,
+            "error": null
+          },
+          {
+            "runAtMs": 1787047735499,
+            "status": "ok",
+            "durationMs": 0,
+            "error": null
+          },
+          {
+            "runAtMs": 1787049535515,
+            "status": "ok",
+            "durationMs": 1,
+            "error": null
+          }
+        ]
+      },
+      "createdAtMs": 1787044135481,
+      "updatedAtMs": 1787049535516,
+      "deleteAfterRun": false
+    }
+  ]
+}

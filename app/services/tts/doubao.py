@@ -1,27 +1,28 @@
 """豆包（火山引擎）TTS 封装。
 
-把文字合成语音，返回音频字节。供 nanobot 口语搭子在 Phase 2 调用，
-让 AI「开口说话」。
-
-用法：
-    python tts_doubao.py "要合成的文字" --out out.mp3
-环境变量（见项目根 .env.example）：
+把文字合成语音，返回音频字节（mp3）。
+用法：python -m services.tts.doubao "要合成的文字" --out out.mp3
+环境变量（见 app/.env.example）：
     VOLCENGINE_APP_ID / VOLCENGINE_ACCESS_TOKEN / VOLCENGINE_CLUSTER
 """
 
 from __future__ import annotations
 
 import argparse
-import json
+import base64
 import os
 import uuid
 
 import httpx
 
 API_URL = "https://openspeech.bytedance.com/api/v1/tts"
+DEFAULT_VOICE = "en_female_myra_cmb_uranus_bigtts"
+
+# 英语口语练习用的英文音色候选（可在 config/.env 覆盖）
+EN_VOICE = "en_female_myra_cmb_uranus_bigtts"
 
 
-def synthesize(text: str, voice_type: str = "zh_female_qingxinnvsheng_moon_bigtts") -> bytes:
+def synthesize(text: str, voice_type: str = DEFAULT_VOICE) -> bytes:
     """合成语音，返回音频字节（mp3）。"""
     app_id = os.environ.get("VOLCENGINE_APP_ID", "")
     access_token = os.environ.get("VOLCENGINE_ACCESS_TOKEN", "")
@@ -56,14 +57,14 @@ def synthesize(text: str, voice_type: str = "zh_female_qingxinnvsheng_moon_bigtt
     if not audio_b64:
         raise RuntimeError("火山 TTS 返回为空")
 
-    return __import__("base64").b64decode(audio_b64)
+    return base64.b64decode(audio_b64)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="豆包 TTS")
     parser.add_argument("text", help="要合成的文字")
     parser.add_argument("--out", default="out.mp3", help="输出文件路径")
-    parser.add_argument("--voice", default="zh_female_qingxinnvsheng_moon_bigtts", help="音色")
+    parser.add_argument("--voice", default=DEFAULT_VOICE, help="音色")
     args = parser.parse_args()
 
     audio = synthesize(args.text, voice_type=args.voice)

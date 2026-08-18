@@ -25,3 +25,22 @@ app/workspace/knowledge/
 Thumbs.db
 .idea/
 .vscode/
+
+# nanobot 运行时数据（会话/媒体/CLI apps）
+app/sessions/
+app/media/
+app/cli-apps/
+
+# nanobot 记忆系统与自动生成的文件（保留 skills/）
+app/workspace/memory/
+app/workspace/SOUL.md
+app/workspace/USER.md
+app/workspace/AGENTS.md
+app/workspace/HEARTBEAT.md
+app/workspace/prompts/
+app/workspace/.nanobot/
+
+# nanobot 运行时 WebUI 状态
+app/webui/
+# IDE / AI 工具配置
+.codebuddy/
