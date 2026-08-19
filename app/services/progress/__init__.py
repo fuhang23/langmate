@@ -7,6 +7,7 @@
 """
 
 from services.progress.models import SECTION_LABELS, SECTIONS, PracticeRecord
+from services.progress.record import record_from_analysis, record_speech_result
 from services.progress.store import ProgressStore, default_db_path
 
 __all__ = [
@@ -15,4 +16,6 @@ __all__ = [
     "SECTIONS",
     "SECTION_LABELS",
     "default_db_path",
+    "record_speech_result",
+    "record_from_analysis",
 ]

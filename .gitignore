@@ -8,6 +8,7 @@ __pycache__/
 *.pyo
 .venv/
 venv/
+*.egg-info/
 
 # ==== nanobot 构建产物 / 前端依赖 ====
 app/nanobot/nanobot/web/dist/

@@ -8,5 +8,11 @@ from services.orchestration.analyze_speech import (
     SpeechAnalysis,
     analyze_speech,
 )
+from services.orchestration.score_repeat import RepeatScoreError, score_repeat
 
-__all__ = ["SpeechAnalysis", "analyze_speech"]
+__all__ = [
+    "SpeechAnalysis",
+    "analyze_speech",
+    "score_repeat",
+    "RepeatScoreError",
+]

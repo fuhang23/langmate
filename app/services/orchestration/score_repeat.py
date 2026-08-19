@@ -1,0 +1,167 @@
+"""跟读复述判分：把「音频 data_url + 转写 + 原文」变成结构化判分结果。
+
+供跟读播放器直连评测使用（不走 agent 对话）。职责：
+1. 解码 base64 data_url 落盘临时文件；
+2. 转 wav 16k（ensure_wav16k）；
+3. 调 analyze_speech（reference_text = 原文）做双轨评测 + 逐字比对；
+4. 返回前端可直接渲染的结构化 JSON（逐字比对、发音/流利度/完整度分、
+   问题音素、重音问题、弱词、CEFR）；
+5. 复用 record_from_analysis 自动写进度库。
+
+本模块不依赖 nanobot 内部，只依赖 services.*，可独立测试。
+"""
+
+from __future__ import annotations
+
+import base64
+import tempfile
+from pathlib import Path
+from typing import Any
+
+from services.orchestration.analyze_speech import analyze_speech
+from services.pronunciation.audio import ensure_wav16k
+from services.progress import record_from_analysis
+
+# 前端录音 MIME 常见前缀（webm/opus 为主，兼容 wav/mp3/mp4）。
+_ALLOWED_MIME_PREFIXES = (
+    "audio/webm",
+    "audio/ogg",
+    "audio/wav",
+    "audio/x-wav",
+    "audio/mp4",
+    "audio/mpeg",
+    "audio/mp3",
+)
+
+
+class RepeatScoreError(RuntimeError):
+    """跟读判分输入无效（缺参数 / data_url 非法）。"""
+
+
+def _decode_data_url(data_url: str) -> tuple[str, bytes]:
+    """解析 base64 data_url，返回 (mime, raw_bytes)。"""
+    if not isinstance(data_url, str) or not data_url.startswith("data:"):
+        raise RepeatScoreError("missing_audio")
+    try:
+        head, _, b64 = data_url.partition(",")
+    except ValueError:
+        raise RepeatScoreError("decode")
+    mime = head[len("data:"):].split(";", 1)[0].strip().lower()
+    if not mime or not any(mime.startswith(p) for p in _ALLOWED_MIME_PREFIXES):
+        raise RepeatScoreError("mime")
+    try:
+        raw = base64.b64decode(b64)
+    except Exception:
+        raise RepeatScoreError("decode")
+    if not raw:
+        raise RepeatScoreError("decode")
+    return mime, raw
+
+
+def _mime_ext(mime: str) -> str:
+    if "webm" in mime:
+        return ".webm"
+    if "ogg" in mime:
+        return ".ogg"
+    if "wav" in mime:
+        return ".wav"
+    if "mp4" in mime:
+        return ".m4a"
+    if "mpeg" in mime or "mp3" in mime:
+        return ".mp3"
+    return ".bin"
+
+
+def _score_payload(analysis: Any, reference_text: str) -> dict[str, Any]:
+    """把 SpeechAnalysis 转成前端可渲染的判分 JSON。"""
+    report = analysis.pronunciation_report
+    transcript = analysis.transcript or ""
+    payload: dict[str, Any] = {
+        "transcript": transcript,
+        "reference_text": reference_text,
+        "matches_reference": transcript.strip().lower()
+        == reference_text.strip().lower(),
+    }
+    if report is not None:
+        payload["scores_0_100"] = {
+            "overall": report.overall,
+            "pronunciation": report.pronunciation,
+            "fluency": report.fluency,
+            "integrity": report.integrity,
+        }
+        payload["speed_wpm"] = report.speed
+        payload["problem_phonemes"] = report.problem_phonemes()
+        payload["stress_issues"] = report.stress_issues()
+        payload["weak_words"] = [
+            {"word": w.word, "ipa": w.ipa, "score": w.pronunciation}
+            for w in report.words
+            if w.pronunciation < 60
+        ]
+    else:
+        payload["scores_0_100"] = None
+        payload["problem_phonemes"] = []
+        payload["stress_issues"] = []
+        payload["weak_words"] = []
+    payload["audio_cefr"] = analysis.audio_cefr
+    if analysis.error:
+        payload["assessment_error"] = analysis.error
+    return payload
+
+
+async def score_repeat(
+    *,
+    audio_data_url: str,
+    sentence_text: str,
+    transcript: str,
+) -> dict[str, Any]:
+    """判分一次跟读复述。
+
+    Args:
+        audio_data_url: 学生录音的 base64 data_url（webm/opus 等）。
+        sentence_text: 跟读题的原文（用于逐字比对与发音评测 reference_text）。
+        transcript: 前端 ASR 转写文本（学生实际说了什么）。
+
+    Returns:
+        结构化判分 JSON（见 _score_payload）。
+
+    Raises:
+        RepeatScoreError: 输入无效（缺参数 / data_url 非法）。
+    """
+    if not sentence_text or not sentence_text.strip():
+        raise RepeatScoreError("missing_sentence_text")
+    if not transcript or not transcript.strip():
+        raise RepeatScoreError("missing_transcript")
+
+    mime, raw = _decode_data_url(audio_data_url)
+    ext = _mime_ext(mime)
+    wav_path: Path | None = None
+    tmp_dir = Path(tempfile.mkdtemp(prefix="langmate_repeat_"))
+    try:
+        audio_path = tmp_dir / f"recording{ext}"
+        audio_path.write_bytes(raw)
+        wav_path = ensure_wav16k(audio_path)
+        analysis = await analyze_speech(
+            transcript,
+            wav_path,
+            reference_text=sentence_text,
+        )
+    except RepeatScoreError:
+        raise
+    except Exception as exc:
+        # 音频转换/评测失败：返回带 error 的空态，不抛异常（降级）。
+        class _Fallback:  # 最小鸭子类型，复用 _score_payload
+            transcript = transcript
+            pronunciation_report = None
+            audio_cefr = {}
+            error = f"{type(exc).__name__}: {exc}"
+
+        return _score_payload(_Fallback(), sentence_text)
+    finally:
+        import shutil
+
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # 评测成功后自动写进度库（复用 AnalyzeSpeechTool 同一逻辑）。
+    record_from_analysis(analysis, sentence_text)
+
+    return _score_payload(analysis, sentence_text)
