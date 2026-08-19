@@ -11,13 +11,41 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
+
+from loguru import logger
 
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
 from nanobot.agent.tools.context import ToolContext
 
 from services.orchestration import analyze_speech
+from services.progress import PracticeRecord, ProgressStore, default_db_path
+
+# CEFR 级别排序（用于取「短板」——综合水平取较弱维度）。
+_CEFR_ORDER = {"A1": 1, "A2": 2, "B1": 3, "B2": 4, "C1": 5, "C2": 6}
+
+
+def _lower_cefr(a: str, b: str) -> str:
+    """取两个 CEFR 级别中较低的一个（短板效应）。"""
+    if not a:
+        return b
+    if not b:
+        return a
+    return a if _CEFR_ORDER.get(a, 0) <= _CEFR_ORDER.get(b, 0) else b
+
+
+def _format_weak_points(report: Any, limit: int = 5) -> list[str]:
+    """把发音报告里的问题音素/重音问题格式化成可读的薄弱点列表。"""
+    points: list[str] = []
+    for p in report.problem_phonemes():
+        heard = f" 发成 {p['heard_as']}" if p.get("heard_as") else ""
+        points.append(f"{p['word']} 的 {p['phoneme']}{heard}")
+    for s in report.stress_issues():
+        direction = "漏重读" if s["should_stress"] else "多读重音"
+        points.append(f"{s['word']} 的 {s['phoneme']} {direction}")
+    return points[:limit]
 
 
 @tool_parameters({
@@ -76,4 +104,35 @@ class AnalyzeSpeechTool(Tool):
             audio_path,
             reference_text=reference_text or "",
         )
+        # 评测成功后自动把进度写入 SQLite（不依赖 AI 自觉调用 record_progress）。
+        self._auto_record_progress(analysis, reference_text)
         return analysis.to_prompt_json()
+
+    def _auto_record_progress(self, analysis: Any, reference_text: str | None) -> None:
+        """把本次口语练习进度写入 SQLite（失败仅记日志，不阻断教学）。"""
+        if analysis.error or not analysis.pronunciation_report:
+            return
+        try:
+            report = analysis.pronunciation_report
+            scores_raw = analysis.audio_cefr.get("_scores_0_4", "{}")
+            scores_04 = (
+                json.loads(scores_raw) if isinstance(scores_raw, str) else scores_raw
+            )
+            pron_cefr = analysis.audio_cefr.get("pronunciation", "")
+            flu_cefr = analysis.audio_cefr.get("fluency", "")
+            cefr = _lower_cefr(pron_cefr, flu_cefr)
+
+            record = PracticeRecord(
+                section="speaking",
+                question_type="listen_and_repeat" if reference_text else "interview",
+                scores={
+                    "pronunciation": scores_04.get("pronunciation"),
+                    "fluency": scores_04.get("fluency"),
+                },
+                cefr=cefr,
+                weak_points=_format_weak_points(report),
+            )
+            ProgressStore(default_db_path()).add_record(record)
+            logger.info("已自动记录口语进度: %s", cefr)
+        except Exception as e:
+            logger.warning("自动记录口语进度失败（不阻断教学）: %s", e)

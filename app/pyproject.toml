@@ -16,6 +16,7 @@ packages = [
     "services.pronunciation",
     "services.cefr",
     "services.orchestration",
+    "services.progress",
     "tools",
 ]
 
@@ -23,6 +24,7 @@ packages = [
 [project.entry-points."nanobot.tools"]
 langmate_speak = "tools.speak_tool:SpeakTool"
 langmate_analyze_speech = "tools.analyze_speech_tool:AnalyzeSpeechTool"
+langmate_record_progress = "tools.record_progress:RecordProgressTool"
 
 [build-system]
 requires = ["setuptools>=68"]
