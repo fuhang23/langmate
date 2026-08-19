@@ -13,63 +13,21 @@
 
 from __future__ import annotations
 
-import base64
 import tempfile
 from pathlib import Path
 from typing import Any
 
+from services.orchestration._audio_utils import (
+    AudioDecodeError,
+    decode_data_url,
+    mime_ext,
+)
 from services.orchestration.analyze_speech import analyze_speech
 from services.pronunciation.audio import ensure_wav16k
 from services.progress import record_from_analysis
 
-# 前端录音 MIME 常见前缀（webm/opus 为主，兼容 wav/mp3/mp4）。
-_ALLOWED_MIME_PREFIXES = (
-    "audio/webm",
-    "audio/ogg",
-    "audio/wav",
-    "audio/x-wav",
-    "audio/mp4",
-    "audio/mpeg",
-    "audio/mp3",
-)
-
-
-class RepeatScoreError(RuntimeError):
-    """跟读判分输入无效（缺参数 / data_url 非法）。"""
-
-
-def _decode_data_url(data_url: str) -> tuple[str, bytes]:
-    """解析 base64 data_url，返回 (mime, raw_bytes)。"""
-    if not isinstance(data_url, str) or not data_url.startswith("data:"):
-        raise RepeatScoreError("missing_audio")
-    try:
-        head, _, b64 = data_url.partition(",")
-    except ValueError:
-        raise RepeatScoreError("decode")
-    mime = head[len("data:"):].split(";", 1)[0].strip().lower()
-    if not mime or not any(mime.startswith(p) for p in _ALLOWED_MIME_PREFIXES):
-        raise RepeatScoreError("mime")
-    try:
-        raw = base64.b64decode(b64)
-    except Exception:
-        raise RepeatScoreError("decode")
-    if not raw:
-        raise RepeatScoreError("decode")
-    return mime, raw
-
-
-def _mime_ext(mime: str) -> str:
-    if "webm" in mime:
-        return ".webm"
-    if "ogg" in mime:
-        return ".ogg"
-    if "wav" in mime:
-        return ".wav"
-    if "mp4" in mime:
-        return ".m4a"
-    if "mpeg" in mime or "mp3" in mime:
-        return ".mp3"
-    return ".bin"
+# 兼容旧引用：RepeatScoreError 即 AudioDecodeError（跟读判分输入无效）。
+RepeatScoreError = AudioDecodeError
 
 
 def _score_payload(analysis: Any, reference_text: str) -> dict[str, Any]:
@@ -132,8 +90,8 @@ async def score_repeat(
     if not transcript or not transcript.strip():
         raise RepeatScoreError("missing_transcript")
 
-    mime, raw = _decode_data_url(audio_data_url)
-    ext = _mime_ext(mime)
+    mime, raw = decode_data_url(audio_data_url)
+    ext = mime_ext(mime)
     wav_path: Path | None = None
     tmp_dir = Path(tempfile.mkdtemp(prefix="langmate_repeat_"))
     try:

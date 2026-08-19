@@ -81,8 +81,8 @@ async def analyze_speech(
         SpeechAnalysis。评测失败时 pronunciation_report 为 None 且
         error 带原因——调用方据此用文字维度兜底，不中断教学。
     """
-    ref = reference_text.strip() or transcript
-    free_speech = not reference_text.strip()
+    ref = (reference_text or "").strip() or transcript
+    free_speech = not (reference_text or "").strip()
 
     analysis = SpeechAnalysis(
         transcript=transcript,

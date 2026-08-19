@@ -5,12 +5,19 @@
 结构化入库 SQLite，供跟读播放器按「场景 + 题号 + 意群」精确取题。
 """
 
-from services.corpus.models import RepeatScenario, RepeatSentence
+from services.corpus.models import (
+    InterviewQuestion,
+    InterviewTopic,
+    RepeatScenario,
+    RepeatSentence,
+)
 from services.corpus.store import CorpusStore, default_corpus_db_path
 
 __all__ = [
     "RepeatScenario",
     "RepeatSentence",
+    "InterviewTopic",
+    "InterviewQuestion",
     "CorpusStore",
     "default_corpus_db_path",
 ]

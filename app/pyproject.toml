@@ -18,6 +18,7 @@ packages = [
     "services.orchestration",
     "services.progress",
     "services.corpus",
+    "services.llm",
     "tools",
 ]
 

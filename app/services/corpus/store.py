@@ -17,7 +17,12 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from services.corpus.models import RepeatScenario, RepeatSentence
+from services.corpus.models import (
+    InterviewQuestion,
+    InterviewTopic,
+    RepeatScenario,
+    RepeatSentence,
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS repeat_scenario (
@@ -34,6 +39,23 @@ CREATE TABLE IF NOT EXISTS repeat_sentence (
 );
 CREATE INDEX IF NOT EXISTS idx_repeat_sentence_scenario
     ON repeat_sentence(scenario_id);
+
+CREATE TABLE IF NOT EXISTS interview_topic (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS interview_question (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic_id INTEGER NOT NULL,
+    seq INTEGER NOT NULL,
+    prompt_en TEXT NOT NULL,
+    prompt_zh TEXT NOT NULL DEFAULT '',
+    reference_answer TEXT NOT NULL DEFAULT '',
+    core_expressions TEXT NOT NULL DEFAULT '[]'
+);
+CREATE INDEX IF NOT EXISTS idx_interview_question_topic
+    ON interview_question(topic_id);
 """
 
 # 编号句子形如 "1. Begin by / washing ..."（序号 + 英文句号 + 空格）。
@@ -212,4 +234,219 @@ class CorpusStore:
             seq=int(row["seq"]),
             text=row["text"],
             chunks=json.loads(row["chunks"]),
+        )
+
+    # -- 互动面试 ---------------------------------------------------------
+
+    def import_interview_docx(self, docx_path: str | Path) -> int:
+        """解析互动面试.docx 并全量入库，返回导入的题数。
+
+        资料有两种格式混合，解析器统一处理：
+
+        格式 A（Reading/Hobbies 等）：
+            主题标题（中文，无 ## / ** 前缀）
+            ## 第 N 题  →  ## 题目（或 **题目：**）
+              > 英文题目   > 中文翻译
+              ## 参考回答（或 **参考回答：**）  > 英文范文
+              **核心表达（黄色高亮）：** 词组 / 词组
+        格式 B（公园/网购等）：
+            主题标题（中文）
+            英文场景设定（You have signed up ...）
+            N. 中文要点（维度）
+            N. First... 英文题目   →   英文参考回答
+        """
+        paragraphs = self._extract_paragraphs(docx_path)
+
+        # 预扫描：把「加粗」与「核心表达」等标记还原为纯文本（加粗不用于解析，
+        # 核心表达是独立字段）。这里只做文本清理，不依赖加粗。
+        return self._parse_interview(paragraphs)
+
+    def _parse_interview(self, paragraphs: list[str]) -> int:
+        """互动面试解析状态机。"""
+        import re as _re
+
+        # 主题标题：非 ##、非 **、非 >、非编号、非纯英文场景、非空。
+        def _is_topic_title(p: str) -> bool:
+            if not p or p.startswith(("##", ">", "**")):
+                return False
+            if _re.match(r"^\d{1,2}\.", p):
+                return False
+            # 场景设定是纯英文长句，主题标题含中文或短中文。
+            return bool(_re.search(r"[\u4e00-\u9fff]", p))
+
+        imported = 0
+        topic_id: int | None = None
+        # 当前题目的暂存字段
+        cur_seq = 0
+        cur_prompt_en: list[str] = []
+        cur_prompt_zh: list[str] = []
+        cur_ref: list[str] = []
+        cur_expr: list[str] = []
+        # 状态：在题目块 / 参考块 / 核心表达块
+        in_prompt = False
+        in_ref = False
+
+        def _flush_question() -> None:
+            nonlocal imported
+            if topic_id is None or cur_seq == 0:
+                return
+            en = " ".join(x.strip() for x in cur_prompt_en if x.strip())
+            zh = " ".join(x.strip() for x in cur_prompt_zh if x.strip())
+            ref = " ".join(x.strip() for x in cur_ref if x.strip())
+            expr = [e.strip() for e in cur_expr if e.strip()]
+            # 清理字面加粗标记 **（作者用它标注核心词组）。
+            en = _re.sub(r"\*\*", "", en)
+            zh = _re.sub(r"\*\*", "", zh)
+            ref = _re.sub(r"\*\*", "", ref)
+            if en or ref:
+                with self._connect() as conn:
+                    conn.execute(
+                        "INSERT INTO interview_question"
+                        " (topic_id, seq, prompt_en, prompt_zh, reference_answer,"
+                        " core_expressions) VALUES (?, ?, ?, ?, ?, ?)",
+                        (
+                            topic_id,
+                            cur_seq,
+                            en,
+                            zh,
+                            ref,
+                            json.dumps(expr, ensure_ascii=False),
+                        ),
+                    )
+                    conn.commit()
+                imported += 1
+
+        def _reset_question() -> None:
+            nonlocal cur_seq, cur_prompt_en, cur_prompt_zh, cur_ref, cur_expr
+            cur_prompt_en, cur_prompt_zh, cur_ref, cur_expr = [], [], [], []
+
+        for p in paragraphs:
+            t = p.strip()
+
+            # 主题标题
+            if _is_topic_title(t):
+                _flush_question()
+                _reset_question()
+                cur_seq = 0
+                with self._connect() as conn:
+                    cur = conn.execute(
+                        "INSERT INTO interview_topic (title, description) VALUES (?, '')",
+                        (t,),
+                    )
+                    conn.commit()
+                    topic_id = int(cur.lastrowid)
+                continue
+
+            # 新题：## 第 N 题
+            m = _re.match(r"^##\s*第\s*(\d+)\s*题", t)
+            if m:
+                _flush_question()
+                _reset_question()
+                cur_seq = int(m.group(1))
+                continue
+
+            # 题目标记：## 题目 / **题目：**
+            if t in ("## 题目",) or t.startswith("**题目") or t == "题目：":
+                _reset_question()
+                in_prompt = True
+                in_ref = False
+                continue
+
+            # 参考回答标记
+            if t in ("## 参考回答",) or t.startswith("**参考回答") or t == "参考回答：":
+                in_prompt = False
+                in_ref = True
+                continue
+
+            # 核心表达标记
+            if t.startswith("**核心表达") or t.startswith("核心表达"):
+                in_ref = False
+                # 提取 "词组 / 词组"（清理残留的 ** 加粗标记）。
+                content = _re.sub(r"^[^:]*[:：]\s*", "", t)
+                content = _re.sub(r"\*\*", "", content)
+                cur_expr = [e.strip() for e in content.split("/") if e.strip()]
+                continue
+
+            # 分隔线 / 空行
+            if not t or t in ("---", "***", "___"):
+                continue
+
+            # 引用行：> ...
+            if t.startswith(">"):
+                content = _re.sub(r"^>\s*", "", t).strip()
+                if not content:
+                    continue
+                if in_prompt:
+                    # 第一个英文行是 prompt_en，中文行是 prompt_zh
+                    if _re.search(r"[\u4e00-\u9fff]", content):
+                        cur_prompt_zh.append(content)
+                    else:
+                        cur_prompt_en.append(content)
+                elif in_ref:
+                    cur_ref.append(content)
+                continue
+
+            # 格式 B：编号 + 英文题目（如 "1. First, can you tell me..."）
+            mb = _re.match(r"^(\d{1,2})\.\s+(.+)$", t)
+            if mb and _re.search(r"[a-zA-Z]{4,}", mb.group(2)):
+                # 判断是「中文要点」（含中文）还是「英文题目」
+                if _re.search(r"[\u4e00-\u9fff]", mb.group(2)):
+                    continue  # 中文要点，跳过
+                _flush_question()
+                _reset_question()
+                cur_seq = int(mb.group(1))
+                cur_prompt_en.append(mb.group(2).strip())
+                in_prompt = False
+                in_ref = True
+                continue
+
+            # 格式 B：纯英文段落（参考回答，紧跟英文题目之后）
+            if in_ref and cur_seq > 0 and _re.search(r"[a-zA-Z]{4,}", t):
+                cur_ref.append(t)
+                continue
+
+        _flush_question()
+        return imported
+
+    def list_interview_topics(self) -> list[dict[str, Any]]:
+        """面试主题列表（含题数），供前端选择。"""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT t.id, t.title, t.description, COUNT(q.id) AS cnt"
+                " FROM interview_topic t LEFT JOIN interview_question q"
+                " ON q.topic_id = t.id GROUP BY t.id ORDER BY t.id ASC"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_interview_topic(self, topic_id: int) -> InterviewTopic | None:
+        """取某面试主题及其 4 题。"""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id, title, description FROM interview_topic WHERE id = ?",
+                (topic_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            questions = conn.execute(
+                "SELECT topic_id, seq, prompt_en, prompt_zh, reference_answer,"
+                " core_expressions FROM interview_question"
+                " WHERE topic_id = ? ORDER BY seq ASC",
+                (topic_id,),
+            ).fetchall()
+
+        return InterviewTopic(
+            id=int(row["id"]),
+            title=row["title"],
+            description=row["description"],
+            questions=[
+                InterviewQuestion(
+                    topic_id=int(q["topic_id"]),
+                    seq=int(q["seq"]),
+                    prompt_en=q["prompt_en"],
+                    prompt_zh=q["prompt_zh"],
+                    reference_answer=q["reference_answer"],
+                    core_expressions=json.loads(q["core_expressions"]),
+                )
+                for q in questions
+            ],
         )

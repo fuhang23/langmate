@@ -41,3 +41,25 @@ class RepeatScenario:
     title: str              # 场景标题，如 "Making salad"
     context_prompt: str     # 情景说明，如 "You are volunteering at ..."
     sentences: list[RepeatSentence] = field(default_factory=list)
+
+
+@dataclass
+class InterviewQuestion:
+    """互动面试的一个题（每题 45 秒自由表达）。"""
+
+    topic_id: int
+    seq: int                        # 1-4，递进式提问
+    prompt_en: str                  # 英文题目（含 interviewer 递进引导语）
+    prompt_zh: str = ""             # 中文翻译 / 要点
+    reference_answer: str = ""      # 参考回答（英文范文）
+    core_expressions: list[str] = field(default_factory=list)  # 核心表达
+
+
+@dataclass
+class InterviewTopic:
+    """互动面试的一个主题（含 4 道递进题）。"""
+
+    id: int
+    title: str              # 主题名，如 "网络购物：习惯、利弊与实体店未来"
+    description: str = ""   # 一句话说明 / 场景设定
+    questions: list[InterviewQuestion] = field(default_factory=list)
