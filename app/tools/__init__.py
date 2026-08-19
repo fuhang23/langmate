@@ -6,7 +6,13 @@
 """
 
 from tools.analyze_speech_tool import AnalyzeSpeechTool
+from tools.chat_scenario import GetChatScenarioTool
 from tools.record_progress import RecordProgressTool
 from tools.speak_tool import SpeakTool
 
-__all__ = ["AnalyzeSpeechTool", "RecordProgressTool", "SpeakTool"]
+__all__ = [
+    "AnalyzeSpeechTool",
+    "GetChatScenarioTool",
+    "RecordProgressTool",
+    "SpeakTool",
+]

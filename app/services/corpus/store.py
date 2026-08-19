@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from services.corpus.models import (
+    ChatScenario,
     InterviewQuestion,
     InterviewTopic,
     RepeatScenario,
@@ -56,6 +57,13 @@ CREATE TABLE IF NOT EXISTS interview_question (
 );
 CREATE INDEX IF NOT EXISTS idx_interview_question_topic
     ON interview_question(topic_id);
+
+CREATE TABLE IF NOT EXISTS chat_scenario (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    context_prompt TEXT NOT NULL DEFAULT '',
+    teaching_point TEXT NOT NULL DEFAULT ''
+);
 """
 
 # 编号句子形如 "1. Begin by / washing ..."（序号 + 英文句号 + 空格）。
@@ -449,4 +457,83 @@ class CorpusStore:
                 )
                 for q in questions
             ],
+        )
+
+    # -- 聊天模式场景 -----------------------------------------------------
+
+    def seed_chat_scenarios(self, scenarios: list[dict[str, str]]) -> int:
+        """幂等预置聊天场景，返回本次新插入的条数。
+
+        Args:
+            scenarios: 每个 dict 含 title / context_prompt / teaching_point。
+        """
+        inserted = 0
+        with self._connect() as conn:
+            for s in scenarios:
+                title = s.get("title", "").strip()
+                if not title:
+                    continue
+                exists = conn.execute(
+                    "SELECT id FROM chat_scenario WHERE title = ?", (title,)
+                ).fetchone()
+                if exists is not None:
+                    continue
+                conn.execute(
+                    "INSERT INTO chat_scenario (title, context_prompt, teaching_point)"
+                    " VALUES (?, ?, ?)",
+                    (
+                        title,
+                        s.get("context_prompt", "").strip(),
+                        s.get("teaching_point", "").strip(),
+                    ),
+                )
+                inserted += 1
+            conn.commit()
+        return inserted
+
+    def list_chat_scenarios(self) -> list[dict[str, Any]]:
+        """聊天场景列表，每项含 id/title/context_prompt/teaching_point。"""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, title, context_prompt, teaching_point"
+                " FROM chat_scenario ORDER BY id ASC"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def chat_scenario_count(self) -> int:
+        with self._connect() as conn:
+            row = conn.execute("SELECT COUNT(*) AS cnt FROM chat_scenario").fetchone()
+        return int(row["cnt"]) if row else 0
+
+    def get_chat_scenario(self, scenario_id: int) -> ChatScenario | None:
+        """取指定 id 的聊天场景。"""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id, title, context_prompt, teaching_point"
+                " FROM chat_scenario WHERE id = ?",
+                (scenario_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return ChatScenario(
+            id=int(row["id"]),
+            title=row["title"],
+            context_prompt=row["context_prompt"],
+            teaching_point=row["teaching_point"],
+        )
+
+    def random_chat_scenario(self) -> ChatScenario | None:
+        """随机取一个聊天场景（无场景时返回 None）。"""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id, title, context_prompt, teaching_point"
+                " FROM chat_scenario ORDER BY RANDOM() LIMIT 1"
+            ).fetchone()
+        if row is None:
+            return None
+        return ChatScenario(
+            id=int(row["id"]),
+            title=row["title"],
+            context_prompt=row["context_prompt"],
+            teaching_point=row["teaching_point"],
         )

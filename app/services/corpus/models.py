@@ -63,3 +63,18 @@ class InterviewTopic:
     title: str              # 主题名，如 "网络购物：习惯、利弊与实体店未来"
     description: str = ""   # 一句话说明 / 场景设定
     questions: list[InterviewQuestion] = field(default_factory=list)
+
+
+@dataclass
+class ChatScenario:
+    """聊天模式的一个主题场景（每节课围绕它展开对话）。
+
+    与备考模式的题库不同，聊天场景是「教学引导素材」而非「题目」：
+    给 agent 提供一个情景设定 + 一个隐性教学点，agent 据此开场、
+    提问、选择性纠错。纯 seed 数据（无 docx 来源）。
+    """
+
+    id: int
+    title: str              # 中英标题，如 "餐厅点餐 / Ordering at a Restaurant"
+    context_prompt: str     # 情景说明，如 "You are ordering food at a restaurant..."
+    teaching_point: str     # 教学点，如 "练习一般现在时与礼貌请求表达"

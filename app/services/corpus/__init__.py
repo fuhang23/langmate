@@ -6,6 +6,7 @@
 """
 
 from services.corpus.models import (
+    ChatScenario,
     InterviewQuestion,
     InterviewTopic,
     RepeatScenario,
@@ -18,6 +19,7 @@ __all__ = [
     "RepeatSentence",
     "InterviewTopic",
     "InterviewQuestion",
+    "ChatScenario",
     "CorpusStore",
     "default_corpus_db_path",
 ]
