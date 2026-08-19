@@ -14,13 +14,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-# 托福五部分（section 的合法取值）。
+# 托福各部分（section 的合法取值）。
 SECTIONS: tuple[str, ...] = (
     "speaking",    # 口语
     "listening",   # 听力
     "reading",     # 阅读
     "writing",     # 写作
     "vocab",       # 词汇
+    "grammar",     # 语法
 )
 
 SECTION_LABELS: dict[str, str] = {
@@ -29,6 +30,7 @@ SECTION_LABELS: dict[str, str] = {
     "reading": "阅读",
     "writing": "写作",
     "vocab": "词汇",
+    "grammar": "语法",
 }
 
 
