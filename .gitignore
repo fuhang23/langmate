@@ -23,6 +23,7 @@ app/nanobot/.venv/
 
 # ==== 本地资料知识库（版权资料，不提交）====
 app/workspace/knowledge/
+app/workspace/skills-reference/
 
 # ==== 系统 / 编辑器 ====
 .DS_Store
@@ -51,6 +52,7 @@ app/workspace/.nanobot/
 app/webui/
 # IDE / AI 工具配置
 .codebuddy/
+.trae/
 
 # LangMate 学习进度数据库（SQLite，运行时生成）
 app/data/
