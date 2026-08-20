@@ -2,6 +2,9 @@
 .env
 *.env.local
 
+# 含 API Key 等的本地配置，不提交（用 config.json.example 作模板）
+app/config.json
+
 # ==== Python 运行产物 ====
 __pycache__/
 *.pyc
@@ -26,6 +29,9 @@ app/workspace/knowledge/
 Thumbs.db
 .idea/
 .vscode/
+
+# 输入法等程序误写入的残留目录（未展开环境变量 %SystemDrive% 作为字面文件夹名，如 %SystemDrive%/ProgramData/SogouInput）
+%SystemDrive%/
 
 # nanobot 运行时数据（会话/媒体/CLI apps）
 app/sessions/

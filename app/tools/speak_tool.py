@@ -66,9 +66,10 @@ class SpeakTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "把英文文字合成语音（TTS）并发送到当前对话，学生会听到朗读。"
+            "把英文文字合成语音（TTS）并发送到当前对话，学生会听到朗读，"
+            "同时语音下方会展示朗读的英文原文（无需你另外发一遍文字）。"
             "用于：复述题播题、正确发音示范、把点评读出来。"
-            "朗读前请先用文字说明你要做什么（如「听一遍示范」）。"
+            "如需额外说明（如「第 2 遍示范」），用 note 参数传一行文字。"
         )
 
     async def execute(
@@ -99,10 +100,13 @@ class SpeakTool(Tool):
         if request_ctx is None or not request_ctx.channel or not request_ctx.chat_id:
             return ToolResult.error("Error: 无当前对话上下文，无法投递语音")
 
+        # LangMate: 语音消息同时携带朗读的英文原文，让学生能边听边看文字参考。
+        # note（如有）作为一行说明，text 作为正文展示。
+        content = f"{note}\n{text}" if note else text
         msg = OutboundMessage(
             channel=request_ctx.channel,
             chat_id=request_ctx.chat_id,
-            content=note or "",
+            content=content,
             media=[str(out_path)],
         )
         try:
