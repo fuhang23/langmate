@@ -55,11 +55,33 @@ def _score_payload(analysis: Any, reference_text: str) -> dict[str, Any]:
             for w in report.words
             if w.pronunciation < 60
         ]
+        # LangMate: 透出完整词级列表（含每个词的得分/音标/音素明细），
+        # 供前端「逐词三档标色 + 点击展开音素详情」。纯透出、零逻辑。
+        payload["words"] = [
+            {
+                "word": w.word,
+                "ipa": w.ipa,
+                "score": w.pronunciation,
+                "phonemes": [
+                    {
+                        "phoneme": p.phoneme,
+                        "score": p.pronunciation,
+                        "correct": p.correct,
+                        "heard_as": p.calibration,
+                        "stress_ref": p.stress_ref,
+                        "stress_detect": p.stress_detect,
+                    }
+                    for p in w.phonemes
+                ],
+            }
+            for w in report.words
+        ]
     else:
         payload["scores_0_100"] = None
         payload["problem_phonemes"] = []
         payload["stress_issues"] = []
         payload["weak_words"] = []
+        payload["words"] = []
     payload["audio_cefr"] = analysis.audio_cefr
     if analysis.error:
         payload["assessment_error"] = analysis.error
@@ -70,25 +92,25 @@ async def score_repeat(
     *,
     audio_data_url: str,
     sentence_text: str,
-    transcript: str,
+    transcript: str = "",
 ) -> dict[str, Any]:
     """判分一次跟读复述。
 
     Args:
         audio_data_url: 学生录音的 base64 data_url（webm/opus 等）。
         sentence_text: 跟读题的原文（用于逐字比对与发音评测 reference_text）。
-        transcript: 前端 ASR 转写文本（学生实际说了什么）。
+        transcript: 前端 ASR 转写文本（学生实际说了什么）。可选：
+            空串表示「尚未转写」，此时仅做发音评测（逐字比对 matches_reference
+            记为 False，由前端拿到真实转写后本地重算覆盖）。
 
     Returns:
         结构化判分 JSON（见 _score_payload）。
 
     Raises:
-        RepeatScoreError: 输入无效（缺参数 / data_url 非法）。
+        RepeatScoreError: 输入无效（缺 sentence_text / data_url 非法）。
     """
     if not sentence_text or not sentence_text.strip():
         raise RepeatScoreError("missing_sentence_text")
-    if not transcript or not transcript.strip():
-        raise RepeatScoreError("missing_transcript")
 
     mime, raw = decode_data_url(audio_data_url)
     ext = mime_ext(mime)
