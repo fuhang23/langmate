@@ -78,3 +78,27 @@ class ChatScenario:
     title: str              # 中英标题，如 "餐厅点餐 / Ordering at a Restaurant"
     context_prompt: str     # 情景说明，如 "You are ordering food at a restaurant..."
     teaching_point: str     # 教学点，如 "练习一般现在时与礼貌请求表达"
+
+
+@dataclass
+class WritingQuestion:
+    """托福写作的一道题（2026 改革后两个主观题型之一）。
+
+    与口语题库不同，写作题「一题一话题」：每个话题是一道独立题，
+    无「主题 → 多题」二级层级。前端按话题卡片列出，点卡片进入作答。
+
+    Attributes:
+        task_type: "email"（写邮件）或 "discussion"（学术讨论）。
+        title: 中文话题标题（卡片展示，如 "餐厅用餐反馈"）。
+        prompt_en: 完整英文题目——邮件题含「背景 + 任务清单」；
+            讨论题含「教授提问 + 两位同学回帖」。
+        prompt_zh: 中文提示（可选，当前题库无，预留）。
+        reference_answer: 参考范文（英文）。
+    """
+
+    id: int
+    task_type: str          # "email" | "discussion"
+    title: str              # 中文话题标题
+    prompt_en: str          # 完整英文题目
+    prompt_zh: str = ""     # 中文提示（预留）
+    reference_answer: str = ""  # 参考范文

@@ -23,6 +23,7 @@ from services.corpus.models import (
     InterviewTopic,
     RepeatScenario,
     RepeatSentence,
+    WritingQuestion,
 )
 
 _SCHEMA = """
@@ -64,6 +65,17 @@ CREATE TABLE IF NOT EXISTS chat_scenario (
     context_prompt TEXT NOT NULL DEFAULT '',
     teaching_point TEXT NOT NULL DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS writing_question (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    prompt_en TEXT NOT NULL DEFAULT '',
+    prompt_zh TEXT NOT NULL DEFAULT '',
+    reference_answer TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_writing_question_type
+    ON writing_question(task_type);
 """
 
 # 编号句子形如 "1. Begin by / washing ..."（序号 + 英文句号 + 空格）。
@@ -537,3 +549,218 @@ class CorpusStore:
             context_prompt=row["context_prompt"],
             teaching_point=row["teaching_point"],
         )
+
+    # -- 托福写作 ---------------------------------------------------------
+
+    @staticmethod
+    def _clean_markdown(text: str) -> str:
+        """清理 docx 里残留的 markdown 加粗、引用前缀与图片批注标记。"""
+        text = re.sub(r"\*\*", "", text)
+        text = re.sub(r">\s*", "", text)
+        text = re.sub(r"【图片批注[：:][^】]*】", "", text)
+        text = re.sub(r"【[^】]*图片[^】]*】", "", text)
+        return text.strip()
+
+    def import_writing_docx(self, docx_path: str | Path, task_type: str) -> int:
+        """解析写作题库 docx 并全量入库，返回导入的题数。
+
+        Args:
+            docx_path: 学术讨论.docx 或 邮件.docx。
+            task_type: "discussion" 或 "email"。
+        """
+        paragraphs = self._extract_paragraphs(docx_path)
+        if task_type == "discussion":
+            items = self._parse_writing_discussion(paragraphs)
+        elif task_type == "email":
+            items = self._parse_writing_email(paragraphs)
+        else:
+            raise ValueError(f"未知写作题型: {task_type}")
+
+        imported = 0
+        with self._connect() as conn:
+            # 幂等：先清空该题型的旧记录再全量重建，避免重复跑 seed 时重复插入。
+            conn.execute("DELETE FROM writing_question WHERE task_type = ?", (task_type,))
+            for it in items:
+                title = it.get("title", "").strip()
+                prompt_en = self._clean_markdown(" ".join(it.get("prompt", [])).strip())
+                ref = self._clean_markdown(" ".join(it.get("essay", [])).strip())
+                if not title or not prompt_en:
+                    continue
+                conn.execute(
+                    "INSERT INTO writing_question"
+                    " (task_type, title, prompt_en, prompt_zh, reference_answer)"
+                    " VALUES (?, ?, ?, '', ?)",
+                    (task_type, title, prompt_en, ref),
+                )
+                imported += 1
+            conn.commit()
+        return imported
+
+    @staticmethod
+    def _parse_writing_discussion(paragraphs: list[str]) -> list[dict[str, Any]]:
+        """解析学术讨论.docx 为题目列表。
+
+        结构：中文标题 → (可选 instruction 块) → 教授标记+提问 →
+        学生一标记+回帖 → 学生二标记+回帖 → 范文（多数无标记，
+        直接是学生二之后的非 > 英文段落；少数有 ## 图二：范文 标记）。
+        """
+        questions: list[dict[str, Any]] = []
+        cur: dict[str, Any] | None = None
+        # state: title / professor / student1 / student2 / essay
+        state = "title"
+
+        def _flush() -> None:
+            nonlocal cur
+            if cur and cur.get("title") and cur.get("prompt"):
+                questions.append(cur)
+            cur = None
+
+        for raw in paragraphs:
+            t = raw.strip()
+            if not t or t == "---" or t in ("***", "___"):
+                continue
+            # 中文标题（不含标记前缀）→ 新题
+            if (
+                re.search(r"[\u4e00-\u9fff]", t)
+                and not t.startswith(("##", "**", ">"))
+                and "范文" not in t
+            ):
+                _flush()
+                cur = {"title": t, "prompt": [], "essay": []}
+                state = "title"
+                continue
+            # 范文标记：## 图二：范文 / ## 参考范文
+            if t.startswith("##") and "范文" in t:
+                state = "essay"
+                continue
+            # 教授 / 学生角色标记
+            if "教授" in t or "学生" in t:
+                if "教授" in t:
+                    state = "professor"
+                elif "学生一" in t:
+                    state = "student1"
+                elif "学生二" in t:
+                    state = "student2"
+                continue
+            # 引用行 > ...
+            if t.startswith(">"):
+                content = re.sub(r"^>\s*", "", t).strip()
+                if not content:
+                    continue
+                if state == "essay" and cur is not None:
+                    cur["essay"].append(content)
+                elif cur is not None:
+                    cur["prompt"].append(content)
+                continue
+            # 非引用英文行：学生二之后 → 范文；否则（instruction 等）→ prompt
+            if state in ("student2", "essay") and cur is not None:
+                cur["essay"].append(t)
+                state = "essay"
+            elif cur is not None:
+                cur["prompt"].append(t)
+
+        _flush()
+        return questions
+
+    @staticmethod
+    def _parse_writing_email(paragraphs: list[str]) -> list[dict[str, Any]]:
+        """解析邮件.docx 为题目列表。
+
+        结构：标题（中文场景名或英文标题）→ 背景 → 任务清单 → 范文
+        （以 Dear/Hi/Hello 开头）。兼容前几题的 ## 图二/图三 范文标记格式。
+        """
+        questions: list[dict[str, Any]] = []
+        cur: dict[str, Any] | None = None
+        # state: title / prompt / essay
+        state = "title"
+        markers = ("**题目背景", "**任务要求", "**Your Response")
+
+        def _flush() -> None:
+            nonlocal cur
+            if cur and cur.get("title") and cur.get("prompt") and cur.get("essay"):
+                questions.append(cur)
+            cur = None
+
+        def _is_greeting(line: str) -> bool:
+            s = line.lstrip(">").strip()
+            return bool(re.match(r"^(Dear|Hi|Hello|Hey)\b", s, re.IGNORECASE))
+
+        n = len(paragraphs)
+        for i, raw in enumerate(paragraphs):
+            t = raw.strip()
+            if not t or t == "---" or t in ("***", "___") or t.startswith("##"):
+                continue
+            # 标记行
+            if t.startswith(markers):
+                state = "essay" if t.startswith("**Your Response") else "prompt"
+                continue
+            # 判断是否新标题
+            is_title = False
+            if state == "title":
+                is_title = True
+            elif state == "essay":
+                # 中文标题（独立行，不以 > 开头；范文里嵌入的【图片批注】是 > 引用行，须排除），
+                # 或英文标题（下一行是 --- 或 **题目背景）。
+                if re.search(r"[\u4e00-\u9fff]", t) and not t.startswith(">"):
+                    is_title = True
+                elif not t.startswith(">") and not re.search(r"[\u4e00-\u9fff]", t):
+                    nxt = paragraphs[i + 1].strip() if i + 1 < n else ""
+                    if nxt == "---" or nxt.startswith("**题目背景"):
+                        is_title = True
+            if is_title:
+                _flush()
+                cur = {"title": t, "prompt": [], "essay": []}
+                state = "prompt"
+                continue
+            if cur is None:
+                continue
+            # 范文开始（邮件问候语）
+            if state == "prompt" and _is_greeting(t):
+                state = "essay"
+                cur["essay"].append(t)
+                continue
+            # 归入当前状态
+            if state == "essay":
+                cur["essay"].append(t)
+            else:
+                cur["prompt"].append(t)
+
+        _flush()
+        return questions
+
+    def list_writing_questions(self, task_type: str) -> list[dict[str, Any]]:
+        """某题型的题目卡片列表（id/title/task_type），供前端话题卡片。"""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, task_type, title FROM writing_question"
+                " WHERE task_type = ? ORDER BY id ASC",
+                (task_type,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_writing_question(self, question_id: int) -> WritingQuestion | None:
+        """取指定 id 的写作题。"""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id, task_type, title, prompt_en, prompt_zh, reference_answer"
+                " FROM writing_question WHERE id = ?",
+                (question_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return WritingQuestion(
+            id=int(row["id"]),
+            task_type=row["task_type"],
+            title=row["title"],
+            prompt_en=row["prompt_en"],
+            prompt_zh=row["prompt_zh"],
+            reference_answer=row["reference_answer"],
+        )
+
+    def writing_question_count(self, task_type: str) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM writing_question WHERE task_type = ?",
+                (task_type,),
+            ).fetchone()
+        return int(row["cnt"]) if row else 0
