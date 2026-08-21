@@ -764,3 +764,120 @@ class CorpusStore:
                 (task_type,),
             ).fetchone()
         return int(row["cnt"]) if row else 0
+
+    # -- 内容采集：结构化 dict 批量入库（幂等） ---------------------------
+
+    def add_writing_questions(self, items: list[dict[str, Any]]) -> int:
+        """批量插入写作题（来自内容采集的大模型输出）。幂等：task_type+title 去重。"""
+        added = 0
+        for it in items:
+            task_type = (it.get("task_type") or "").strip()
+            title = (it.get("title") or "").strip()
+            prompt_en = (it.get("prompt_en") or "").strip()
+            reference_answer = (it.get("reference_answer") or "").strip()
+            if task_type not in ("email", "discussion") or not title or not prompt_en:
+                continue
+            with self._connect() as conn:
+                dup = conn.execute(
+                    "SELECT 1 FROM writing_question WHERE task_type = ? AND title = ?",
+                    (task_type, title),
+                ).fetchone()
+                if dup:
+                    continue
+                conn.execute(
+                    "INSERT INTO writing_question"
+                    " (task_type, title, prompt_en, prompt_zh, reference_answer)"
+                    " VALUES (?, ?, ?, '', ?)",
+                    (task_type, title, prompt_en, reference_answer),
+                )
+                conn.commit()
+            added += 1
+        return added
+
+    def add_speaking_repeat(self, items: list[dict[str, Any]]) -> int:
+        """插入跟读场景+句子（来自内容采集）。幂等：scenario title 去重。"""
+        added = 0
+        for it in items:
+            title = (it.get("title") or "").strip()
+            sentences = it.get("sentences") or []
+            if not title or not sentences:
+                continue
+            with self._connect() as conn:
+                dup = conn.execute(
+                    "SELECT 1 FROM repeat_scenario WHERE title = ?", (title,)
+                ).fetchone()
+                if dup:
+                    continue
+                cur = conn.execute(
+                    "INSERT INTO repeat_scenario (title, context_prompt) VALUES (?, '')",
+                    (title,),
+                )
+                sid = int(cur.lastrowid)
+                for s in sentences:
+                    text = (s.get("text") or "").strip()
+                    if not text:
+                        continue
+                    chunks = s.get("chunks") or []
+                    if isinstance(chunks, str):
+                        chunks = [c.strip() for c in chunks.split("/") if c.strip()]
+                    try:
+                        seq = int(s.get("seq", 0))
+                    except (TypeError, ValueError):
+                        seq = 0
+                    conn.execute(
+                        "INSERT INTO repeat_sentence (scenario_id, seq, text, chunks)"
+                        " VALUES (?, ?, ?, ?)",
+                        (sid, seq, text, json.dumps(chunks, ensure_ascii=False)),
+                    )
+                conn.commit()
+            added += 1
+        return added
+
+    def add_speaking_interview(self, items: list[dict[str, Any]]) -> int:
+        """插入面试主题+题（来自内容采集）。幂等：topic title 去重。"""
+        added = 0
+        for it in items:
+            title = (it.get("title") or "").strip()
+            questions = it.get("questions") or []
+            if not title or not questions:
+                continue
+            with self._connect() as conn:
+                dup = conn.execute(
+                    "SELECT 1 FROM interview_topic WHERE title = ?", (title,)
+                ).fetchone()
+                if dup:
+                    continue
+                cur = conn.execute(
+                    "INSERT INTO interview_topic (title, description) VALUES (?, '')",
+                    (title,),
+                )
+                tid = int(cur.lastrowid)
+                for q in questions:
+                    prompt_en = (q.get("prompt_en") or "").strip()
+                    if not prompt_en:
+                        continue
+                    prompt_zh = (q.get("prompt_zh") or "").strip()
+                    reference_answer = (q.get("reference_answer") or "").strip()
+                    core = q.get("core_expressions") or []
+                    if isinstance(core, str):
+                        core = [core]
+                    try:
+                        seq = int(q.get("seq", 0))
+                    except (TypeError, ValueError):
+                        seq = 0
+                    conn.execute(
+                        "INSERT INTO interview_question"
+                        " (topic_id, seq, prompt_en, prompt_zh, reference_answer,"
+                        " core_expressions) VALUES (?, ?, ?, ?, ?, ?)",
+                        (
+                            tid,
+                            seq,
+                            prompt_en,
+                            prompt_zh,
+                            reference_answer,
+                            json.dumps(core, ensure_ascii=False),
+                        ),
+                    )
+                conn.commit()
+            added += 1
+        return added

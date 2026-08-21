@@ -38,8 +38,8 @@ class Chunk:
         )
 
     def source_label(self) -> str:
-        """生成可展示的来源标签（如 "[ETS Lesson Plan Writing, Lesson 3, p.12]"）。"""
-        parts = ["ETS Lesson Plan Writing"]
+        """生成可展示的来源标签（如 "[lesson-plan-writing, Lesson 3, p.12]"）。"""
+        parts = [self.source or "rag"]
         if self.lesson:
             parts.append(f"Lesson {self.lesson}")
         if self.title:

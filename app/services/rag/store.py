@@ -46,6 +46,15 @@ class RagIndex:
         _, labels = self.index.search(q, top_k)
         return [self.chunks[int(i)] for i in labels[0] if i >= 0]
 
+    def append(self, vectors: np.ndarray, chunks: list[Chunk]) -> None:
+        """追加新向量与 chunk（faiss index.add 增量追加，不重建已有向量）。"""
+        if len(chunks) == 0:
+            return
+        mat = np.asarray(vectors, dtype=np.float32)
+        faiss.normalize_L2(mat)
+        self.index.add(mat)
+        self.chunks.extend(chunks)
+
     def save(self, index_dir: str | Path) -> None:
         index_dir = Path(index_dir)
         index_dir.mkdir(parents=True, exist_ok=True)

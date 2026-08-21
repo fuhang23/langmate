@@ -26,3 +26,23 @@ def rag_search(
         return index.search(np.asarray(vec, dtype=np.float32), top_k=top_k)
     except Exception:
         return []
+
+
+def rag_append(
+    source: str,
+    chunks: list[Chunk],
+    index_dir: str | None = None,
+) -> int:
+    """向某 source 追加 chunk（faiss 增量，不存在则新建）。返回追加后 chunk 总数。
+
+    与 rag_search 不同，本函数失败会向上抛异常（内容采集确认入库时应感知失败）。
+    """
+    index_dir = index_dir or default_index_dir()
+    vectors = embed_bailian.embed_texts([c.text for c in chunks])
+    try:
+        index = RagIndex.load(source, index_dir)
+        index.append(np.asarray(vectors, dtype=np.float32), chunks)
+    except FileNotFoundError:
+        index = RagIndex(source, np.asarray(vectors, dtype=np.float32), chunks)
+    index.save(index_dir)
+    return len(index.chunks)
