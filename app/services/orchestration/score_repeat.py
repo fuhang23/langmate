@@ -93,6 +93,8 @@ async def score_repeat(
     audio_data_url: str,
     sentence_text: str,
     transcript: str = "",
+    scenario_id: int = 0,
+    sentence_seq: int = 0,
 ) -> dict[str, Any]:
     """判分一次跟读复述。
 
@@ -102,6 +104,8 @@ async def score_repeat(
         transcript: 前端 ASR 转写文本（学生实际说了什么）。可选：
             空串表示「尚未转写」，此时仅做发音评测（逐字比对 matches_reference
             记为 False，由前端拿到真实转写后本地重算覆盖）。
+        scenario_id: 跟读场景 id（>0 时题目级练习统计记为 "repeat:{scenario_id}"）。
+        sentence_seq: 场景内句子 seq（用于统计组内覆盖）。
 
     Returns:
         结构化判分 JSON（见 _score_payload）。
@@ -142,6 +146,11 @@ async def score_repeat(
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
     # 评测成功后自动写进度库（复用 AnalyzeSpeechTool 同一逻辑）。
-    record_from_analysis(analysis, sentence_text)
+    record_from_analysis(
+        analysis,
+        sentence_text,
+        question_key=f"repeat:{scenario_id}" if scenario_id > 0 else "",
+        question_seq=sentence_seq,
+    )
 
     return _score_payload(analysis, sentence_text)

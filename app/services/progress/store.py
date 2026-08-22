@@ -26,11 +26,19 @@ CREATE TABLE IF NOT EXISTS practice_records (
     scores TEXT NOT NULL DEFAULT '{}',
     cefr TEXT NOT NULL DEFAULT '',
     weak_points TEXT NOT NULL DEFAULT '[]',
+    question_key TEXT NOT NULL DEFAULT '',
+    question_seq INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_records_section ON practice_records(section);
 CREATE INDEX IF NOT EXISTS idx_records_created ON practice_records(created_at);
 """
+
+# 老库幂等补列（CREATE TABLE IF NOT EXISTS 不会给旧表加列）。
+_EXTRA_COLUMNS = (
+    ("question_key", "TEXT NOT NULL DEFAULT ''"),
+    ("question_seq", "INTEGER NOT NULL DEFAULT 0"),
+)
 
 
 def default_db_path() -> Path:
@@ -57,6 +65,20 @@ class ProgressStore:
     def _init_schema(self) -> None:
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
+            # 老库幂等补列：PRAGMA table_info 检查后 ALTER TABLE。
+            existing = {
+                row["name"] for row in conn.execute("PRAGMA table_info(practice_records)")
+            }
+            for col, ddl in _EXTRA_COLUMNS:
+                if col not in existing:
+                    conn.execute(
+                        f"ALTER TABLE practice_records ADD COLUMN {col} {ddl}"
+                    )
+            # 索引依赖新列，须在补列之后创建。
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_records_question_key"
+                " ON practice_records(question_key)"
+            )
             conn.commit()
 
     def add_record(self, record: PracticeRecord) -> None:
@@ -64,14 +86,17 @@ class ProgressStore:
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO practice_records"
-                " (section, question_type, scores, cefr, weak_points, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
+                " (section, question_type, scores, cefr, weak_points,"
+                " question_key, question_seq, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     record.section,
                     record.question_type,
                     json.dumps(record.scores, ensure_ascii=False),
                     record.cefr,
                     json.dumps(record.weak_points, ensure_ascii=False),
+                    record.question_key,
+                    record.question_seq,
                     record.created_at,
                 ),
             )
@@ -122,3 +147,23 @@ class ProgressStore:
                 "updatedAt": self.latest_updated_at(section),
             }
         return result
+
+    def question_stats(self) -> dict[str, dict[str, Any]]:
+        """题目级练习统计：按 question_key 聚合。
+
+        返回 {"repeat:12": {"count": 14, "covered": 7}, ...}：
+        - count：该题判分事件总次数
+        - covered：组内覆盖数（跟读 = 已练句子数、面试 = 已练题数；写作恒为 1）
+        空 question_key（agent 对话链路 / 历史记录）不参与统计。
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT question_key, COUNT(*) AS cnt,"
+                " COUNT(DISTINCT question_seq) AS covered"
+                " FROM practice_records WHERE question_key != ''"
+                " GROUP BY question_key"
+            ).fetchall()
+        return {
+            row["question_key"]: {"count": int(row["cnt"]), "covered": int(row["covered"])}
+            for row in rows
+        }

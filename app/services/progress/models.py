@@ -44,6 +44,9 @@ class PracticeRecord:
         scores: 五维分（0-4 制），如 {"pronunciation": 3.0, ...}。
         cefr: 本次练习综合出的 CEFR 级别（如 "B1"）。
         weak_points: 本次暴露的薄弱点（音素、语法点、词汇等）。
+        question_key: 题目标识（如 "repeat:12" / "interview:5" / "writing:23"），
+            空串表示非题目入口（如 agent 对话链路）或历史记录。
+        question_seq: 组内序号（跟读句子 seq / 面试题号；写作为 0）。
         created_at: ISO 8601 时间戳（UTC）。
     """
 
@@ -52,6 +55,8 @@ class PracticeRecord:
     scores: dict[str, Any] = field(default_factory=dict)
     cefr: str = ""
     weak_points: list[str] = field(default_factory=list)
+    question_key: str = ""
+    question_seq: int = 0
     created_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )

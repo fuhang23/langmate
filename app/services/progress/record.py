@@ -52,6 +52,8 @@ def record_speech_result(
     scores: dict[str, Any] | None = None,
     cefr: str = "",
     weak_points: list[str] | None = None,
+    question_key: str = "",
+    question_seq: int = 0,
 ) -> bool:
     """把一次口语练习的评分结果写入进度库。
 
@@ -61,6 +63,9 @@ def record_speech_result(
         scores: 维度分（0-4 制），如 {"pronunciation": 3.0, ...}。
         cefr: 本次练习综合出的 CEFR 级别（如 "B1"）。
         weak_points: 薄弱点列表。
+        question_key: 题目标识（"repeat:{id}" / "interview:{id}"），空串表示
+            非题目入口（agent 对话链路），不参与题目级统计。
+        question_seq: 组内序号（跟读句子 seq / 面试题号）。
 
     Returns:
         True 表示写入成功；False 表示写入失败（已记 warning，不抛异常）。
@@ -71,6 +76,8 @@ def record_speech_result(
         scores=scores or {},
         cefr=cefr or "",
         weak_points=weak_points or [],
+        question_key=question_key or "",
+        question_seq=question_seq or 0,
     )
     try:
         ProgressStore(default_db_path()).add_record(record)
@@ -80,12 +87,20 @@ def record_speech_result(
         return False
 
 
-def record_from_analysis(analysis: Any, reference_text: str | None) -> None:
+def record_from_analysis(
+    analysis: Any,
+    reference_text: str | None,
+    question_key: str = "",
+    question_seq: int = 0,
+) -> None:
     """从 SpeechAnalysis 结果推导并写入进度库（AnalyzeSpeechTool 复用）。
 
     Args:
         analysis: services.orchestration.analyze_speech.SpeechAnalysis 实例。
         reference_text: 复述题原文；为 None/空 表示自由作答（互动面试）。
+        question_key: 题目标识（"repeat:{id}" / "interview:{id}"），空串表示
+            非题目入口。
+        question_seq: 组内序号。
     """
     if analysis.error or not analysis.pronunciation_report:
         return
@@ -106,5 +121,7 @@ def record_from_analysis(analysis: Any, reference_text: str | None) -> None:
         },
         cefr=cefr,
         weak_points=_format_weak_points(report),
+        question_key=question_key,
+        question_seq=question_seq,
     )
     logger.info("已自动记录口语进度: %s", cefr)

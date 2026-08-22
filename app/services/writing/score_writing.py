@@ -79,7 +79,12 @@ def _user_prompt(prompt_en: str, reference_answer: str, student_text: str) -> st
     )
 
 
-def _record_progress(task_type: str, overall_score: int, weak_dimensions: list[str]) -> None:
+def _record_progress(
+    task_type: str,
+    overall_score: int,
+    weak_dimensions: list[str],
+    question_key: str = "",
+) -> None:
     try:
         record = PracticeRecord(
             section="writing",
@@ -87,6 +92,7 @@ def _record_progress(task_type: str, overall_score: int, weak_dimensions: list[s
             scores={"overall": overall_score},
             cefr=_cefr_from_score(overall_score),
             weak_points=weak_dimensions,
+            question_key=question_key,
         )
         ProgressStore(default_db_path()).add_record(record)
     except Exception:
@@ -99,6 +105,7 @@ async def score_writing(
     prompt_en: str,
     reference_answer: str,
     student_text: str,
+    question_id: int = 0,
 ) -> dict[str, Any]:
     """判分一次写作作答。
 
@@ -107,6 +114,7 @@ async def score_writing(
         prompt_en: 完整英文题目（邮件含任务清单；讨论含教授+两学生回帖）。
         reference_answer: 参考范文（仅用于提取地道表达）。
         student_text: 学生写的作文。
+        question_id: 写作题 id（>0 时题目级练习统计记为 "writing:{question_id}"）。
 
     Returns:
         判分结果 dict：overall_score / dimension_comments / grammar_corrections /
@@ -165,7 +173,12 @@ async def score_writing(
         str(c.get("dimension", "")) for c in dimension_comments if c.get("dimension")
     ]
 
-    _record_progress(task_type, overall_score, weak_dimensions)
+    _record_progress(
+        task_type,
+        overall_score,
+        weak_dimensions,
+        question_key=f"writing:{question_id}" if question_id > 0 else "",
+    )
 
     return {
         "overall_score": overall_score,

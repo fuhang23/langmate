@@ -54,6 +54,8 @@ async def score_interview(
     audio_data_url: str,
     transcript: str,
     question_prompt: str,
+    topic_id: int = 0,
+    question_seq: int = 0,
 ) -> dict[str, Any]:
     """判分一次互动面试作答。
 
@@ -61,6 +63,8 @@ async def score_interview(
         audio_data_url: 学生录音的 base64 data_url。
         transcript: 前端 ASR 转写文本。
         question_prompt: 面试题目（英文，含 interviewer 引导语），用于 LLM 评分。
+        topic_id: 面试主题 id（>0 时题目级练习统计记为 "interview:{topic_id}"）。
+        question_seq: 主题内题号（用于统计组内覆盖）。
 
     Returns:
         合并后的结构化判分 JSON：
@@ -150,7 +154,12 @@ async def score_interview(
     # 4. 写进度库（question_type="interview"，由 reference_text=None 自动判定）。
     if analysis is not None and not audio_payload.get("audio_error"):
         try:
-            record_from_analysis(analysis, None)
+            record_from_analysis(
+                analysis,
+                None,
+                question_key=f"interview:{topic_id}" if topic_id > 0 else "",
+                question_seq=question_seq,
+            )
         except Exception:
             pass  # 写进度失败不阻断
 
