@@ -102,3 +102,17 @@ class QuestionEmbeddingStore:
                 (category,),
             ).fetchone()
         return int(row["cnt"]) if row else 0
+
+    def delete_by_prompt(self, category: str, prompt_text: str) -> int:
+        """按 category + question_key 删除一条题干向量缓存，返回删除行数。
+
+        用于删除题目或编辑改题干后清理旧向量，避免残留向量导致后续去重误判。
+        """
+        with self._connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM question_embedding"
+                " WHERE category = ? AND question_key = ?",
+                (category, question_key(prompt_text)),
+            )
+            conn.commit()
+        return int(cur.rowcount)

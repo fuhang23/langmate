@@ -119,11 +119,14 @@ def detect_question_duplicates(
     items: list[dict],
     category: str,
     threshold: float | None = None,
+    exclude_prompt: str | None = None,
 ) -> list[dict]:
     """检测每个题目 item 是否与题库已有题高度相似。
 
     返回与 items 顺序一致的 list[{duplicate: bool, similarity: float}]。
     首次检测某 category 时若缓存为空，会从题库惰性回填题干向量。
+    exclude_prompt：编辑场景传入被编辑题的旧题干文本，比对时排除自身，
+    避免「与自己旧版本判重」。
     """
     threshold = threshold if threshold is not None else _question_threshold()
     results = [{"duplicate": False, "similarity": 0.0} for _ in items]
@@ -136,6 +139,8 @@ def detect_question_duplicates(
         _backfill(category, qe)
 
     existing = qe.list_by_category(category)
+    if exclude_prompt:
+        existing = [e for e in existing if e["prompt_text"] != exclude_prompt]
     if not existing:
         return results
 

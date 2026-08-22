@@ -6,7 +6,7 @@ from typing import Any
 
 from services.dedup import detect_question_duplicates, sync_question_embeddings
 
-_VALID_CATEGORIES = (
+VALID_CATEGORIES = (
     "speaking_repeat",
     "speaking_interview",
     "writing_email",
@@ -17,7 +17,7 @@ _REPEAT_SENTENCE_COUNT = 7
 _INTERVIEW_QUESTION_COUNT = 4
 
 
-def _to_items(category: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
+def to_items(category: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
     """把表单 payload 转成 corpus.add_* / dedup 需要的 items 结构（单个 item）。"""
     if category in ("writing_email", "writing_discussion"):
         task_type = "email" if category == "writing_email" else "discussion"
@@ -66,7 +66,7 @@ def _to_items(category: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
-def _validate(category: str, items: list[dict[str, Any]]) -> str | None:
+def validate(category: str, items: list[dict[str, Any]]) -> str | None:
     """校验必填字段与数量，返回错误信息；通过返回 None。"""
     if not items:
         return "缺少题目内容"
@@ -99,11 +99,12 @@ async def add_manual_question(
     返回：
     - {"status": "added", "questions": int}：入库成功（questions 为实际新增条数）
     - {"status": "duplicate", "similarity": float}：重复且未 force（不入库）
+    - {"status": "invalid", "message": str}：表单校验失败（不入库）
     """
-    if category not in _VALID_CATEGORIES:
+    if category not in VALID_CATEGORIES:
         raise RuntimeError(f"未知题型: {category}")
 
-    items = _to_items(category, payload)
+    items = to_items(category, payload)
 
     # 听后复述：空 chunks 自动按意群断句（可选，失败降级为整句）。
     if category == "speaking_repeat" and items:
@@ -116,9 +117,9 @@ async def add_manual_question(
             for s, cs in zip(need, chunks_list):
                 s["chunks"] = cs
 
-    err = _validate(category, items)
+    err = validate(category, items)
     if err:
-        raise RuntimeError(err)
+        return {"status": "invalid", "message": err}
 
     # 去重检测（单个 item）。
     marks = detect_question_duplicates(items, category)

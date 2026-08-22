@@ -196,11 +196,12 @@ class CorpusStore:
     # -- 查询 -------------------------------------------------------------
 
     def list_scenarios(self) -> list[dict[str, Any]]:
-        """场景列表（供前端选择），每项含 id/title/context_prompt。"""
+        """场景列表（供前端选择与管理），每项含 id/title/context_prompt/sentence_count。"""
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT id, title, context_prompt FROM repeat_scenario"
-                " ORDER BY id ASC"
+                "SELECT s.id, s.title, s.context_prompt, COUNT(r.id) AS sentence_count"
+                " FROM repeat_scenario s LEFT JOIN repeat_sentence r"
+                " ON r.scenario_id = s.id GROUP BY s.id ORDER BY s.id ASC"
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -922,18 +923,180 @@ class CorpusStore:
                     except (TypeError, ValueError):
                         seq = 0
                     conn.execute(
-                        "INSERT INTO interview_question"
-                        " (topic_id, seq, prompt_en, prompt_zh, reference_answer,"
-                        " core_expressions) VALUES (?, ?, ?, ?, ?, ?)",
-                        (
-                            tid,
-                            seq,
-                            prompt_en,
-                            prompt_zh,
-                            reference_answer,
-                            json.dumps(core, ensure_ascii=False),
-                        ),
-                    )
+                    "INSERT INTO interview_question"
+                    " (topic_id, seq, prompt_en, prompt_zh, reference_answer,"
+                    " core_expressions) VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        tid,
+                        seq,
+                        prompt_en,
+                        prompt_zh,
+                        reference_answer,
+                        json.dumps(core, ensure_ascii=False),
+                    ),
+                )
                 conn.commit()
             added += 1
         return added
+
+    # -- 题库管理：删除/更新（物理删除，子表+主表同事务） -------------------
+
+    def delete_repeat_scenario(self, scenario_id: int) -> bool:
+        """删除跟读场景及其全部句子。场景不存在返回 False。"""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id FROM repeat_scenario WHERE id = ?", (scenario_id,)
+            ).fetchone()
+            if row is None:
+                return False
+            conn.execute(
+                "DELETE FROM repeat_sentence WHERE scenario_id = ?", (scenario_id,)
+            )
+            conn.execute("DELETE FROM repeat_scenario WHERE id = ?", (scenario_id,))
+            conn.commit()
+        return True
+
+    def delete_interview_topic(self, topic_id: int) -> bool:
+        """删除面试主题及其全部题目。主题不存在返回 False。"""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id FROM interview_topic WHERE id = ?", (topic_id,)
+            ).fetchone()
+            if row is None:
+                return False
+            conn.execute(
+                "DELETE FROM interview_question WHERE topic_id = ?", (topic_id,)
+            )
+            conn.execute("DELETE FROM interview_topic WHERE id = ?", (topic_id,))
+            conn.commit()
+        return True
+
+    def delete_writing_question(self, question_id: int) -> bool:
+        """删除写作题。题目不存在返回 False。"""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id FROM writing_question WHERE id = ?", (question_id,)
+            ).fetchone()
+            if row is None:
+                return False
+            conn.execute("DELETE FROM writing_question WHERE id = ?", (question_id,))
+            conn.commit()
+        return True
+
+    def update_repeat_scenario(
+        self,
+        scenario_id: int,
+        title: str,
+        context_prompt: str,
+        sentences: list[dict[str, Any]],
+    ) -> bool:
+        """更新跟读场景：主表 UPDATE + 句子全量替换（DELETE 后按 seq 1..n INSERT）。
+
+        sentences 结构与 add_speaking_repeat 一致：[{seq, text, chunks(list)}]。
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id FROM repeat_scenario WHERE id = ?", (scenario_id,)
+            ).fetchone()
+            if row is None:
+                return False
+            conn.execute(
+                "UPDATE repeat_scenario SET title = ?, context_prompt = ? WHERE id = ?",
+                (title.strip(), (context_prompt or "").strip(), scenario_id),
+            )
+            conn.execute(
+                "DELETE FROM repeat_sentence WHERE scenario_id = ?", (scenario_id,)
+            )
+            for i, s in enumerate(sentences, start=1):
+                text = (s.get("text") or "").strip()
+                if not text:
+                    continue
+                chunks = s.get("chunks") or []
+                if isinstance(chunks, str):
+                    chunks = [c.strip() for c in chunks.split("/") if c.strip()]
+                conn.execute(
+                    "INSERT INTO repeat_sentence (scenario_id, seq, text, chunks)"
+                    " VALUES (?, ?, ?, ?)",
+                    (scenario_id, i, text, json.dumps(chunks, ensure_ascii=False)),
+                )
+            conn.commit()
+        return True
+
+    def update_interview_topic(
+        self,
+        topic_id: int,
+        title: str,
+        description: str,
+        questions: list[dict[str, Any]],
+    ) -> bool:
+        """更新面试主题：主表 UPDATE + 题目全量替换（DELETE 后按 seq 1..n INSERT）。
+
+        questions 结构与 add_speaking_interview 一致：
+        [{seq, prompt_en, prompt_zh, reference_answer, core_expressions(list)}]。
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id FROM interview_topic WHERE id = ?", (topic_id,)
+            ).fetchone()
+            if row is None:
+                return False
+            conn.execute(
+                "UPDATE interview_topic SET title = ?, description = ? WHERE id = ?",
+                (title.strip(), (description or "").strip(), topic_id),
+            )
+            conn.execute(
+                "DELETE FROM interview_question WHERE topic_id = ?", (topic_id,)
+            )
+            for i, q in enumerate(questions, start=1):
+                prompt_en = (q.get("prompt_en") or "").strip()
+                if not prompt_en:
+                    continue
+                core = q.get("core_expressions") or []
+                if isinstance(core, str):
+                    core = [core]
+                conn.execute(
+                    "INSERT INTO interview_question"
+                    " (topic_id, seq, prompt_en, prompt_zh, reference_answer,"
+                    " core_expressions) VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        topic_id,
+                        i,
+                        prompt_en,
+                        (q.get("prompt_zh") or "").strip(),
+                        (q.get("reference_answer") or "").strip(),
+                        json.dumps(core, ensure_ascii=False),
+                    ),
+                )
+            conn.commit()
+        return True
+
+    def update_writing_question(
+        self,
+        question_id: int,
+        task_type: str,
+        title: str,
+        prompt_en: str,
+        prompt_zh: str,
+        reference_answer: str,
+    ) -> bool:
+        """更新写作题（单行 UPDATE）。题目不存在返回 False。"""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id FROM writing_question WHERE id = ?", (question_id,)
+            ).fetchone()
+            if row is None:
+                return False
+            conn.execute(
+                "UPDATE writing_question SET task_type = ?, title = ?, prompt_en = ?,"
+                " prompt_zh = ?, reference_answer = ? WHERE id = ?",
+                (
+                    task_type,
+                    title.strip(),
+                    prompt_en.strip(),
+                    (prompt_zh or "").strip(),
+                    (reference_answer or "").strip(),
+                    question_id,
+                ),
+            )
+            conn.commit()
+        return True
