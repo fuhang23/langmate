@@ -105,7 +105,9 @@ async def score_content(
             score = None
         else:
             try:
-                score = max(0, min(100, int(raw_score)))
+                # 先 float 再取整：LLM 偶发返回 "85.5" 之类小数，
+                # int("85.5") 抛 ValueError 会把合法分丢成 None。
+                score = max(0, min(100, int(float(raw_score))))
             except (TypeError, ValueError):
                 score = None
         result[section] = {

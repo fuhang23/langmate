@@ -18,7 +18,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import shutil
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -29,9 +32,13 @@ from services.pronunciation.audio import ensure_wav16k
 
 
 def _score100_to_4(score100: float) -> float:
-    """把 0-100 分线性归一到 0-4 分制（保留 0.5 档粒度）。"""
+    """把 0-100 分线性归一到 0-4 分制（保留 0.5 档粒度）。
+
+    用 int(x + 0.5) 而非 round()：Python round 是银行家舍入，
+    .25/.75 边界会向偶数档偏（round(2.5)==2），造成偶发半档偏低。
+    """
     raw = max(0.0, min(100.0, score100)) / 25.0
-    return round(raw * 2) / 2  # 取整到 0.5 档
+    return int(raw * 2 + 0.5) / 2  # 取整到 0.5 档
 
 
 @dataclass
@@ -90,12 +97,18 @@ async def analyze_speech(
         pronunciation_report=None,
     )
 
+    # ffmpeg 转换是同步阻塞调用（subprocess），用 to_thread 移出事件循环，
+    # 避免判分期间冻结整个网关；转换产物写进专属临时目录，用完即清
+    # （不泄漏到系统 Temp）。score_pronunciation 本身是 async（AsyncClient）。
+    tmp_dir = Path(tempfile.mkdtemp(prefix="langmate_wav_"))
     try:
-        wav_path = ensure_wav16k(audio_path)
+        wav_path = await asyncio.to_thread(ensure_wav16k, audio_path, out_dir=tmp_dir)
         report = await score_pronunciation(wav_path, ref)
     except Exception as e:  # 网络/鉴权/格式问题都走文字兜底
         analysis.error = f"{type(e).__name__}: {e}"
         return analysis
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
     analysis.pronunciation_report = report
 

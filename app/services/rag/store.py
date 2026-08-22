@@ -21,7 +21,7 @@ def default_index_dir() -> Path:
     env = os.environ.get("FAISS_INDEX_DIR")
     if env:
         return Path(env)
-    return Path("data") / "rag" / "index"
+    return Path(__file__).resolve().parents[2] / "data" / "rag" / "index"
 
 
 class RagIndex:
@@ -55,7 +55,9 @@ class RagIndex:
         distances, labels = self.index.search(q, top_k)
         result: list[tuple[Chunk, float]] = []
         for score, i in zip(distances[0], labels[0]):
-            if i >= 0:
+            # 越界防护：faiss 与 chunks 元数据短暂失配时（save 的两次
+            # os.replace 非原子），只跳过越界项，不让 IndexError 打挂检索。
+            if 0 <= int(i) < len(self.chunks):
                 result.append((self.chunks[int(i)], float(score)))
         return result
 
@@ -101,6 +103,14 @@ class RagIndex:
             raise FileNotFoundError(f"索引不存在: {source}（先运行 ingest）")
         index = faiss.read_index(str(idx_path))
         chunks = [Chunk.from_dict(d) for d in json.loads(meta_path.read_text(encoding="utf-8"))]
+        if index.ntotal != len(chunks):
+            # faiss 向量数与 chunk 元数据数不一致（save 的两次 os.replace
+            # 非原子，中途崩溃可能只更新了其一）：明确报错让上层降级重建，
+            # 而不是静默检索到错位/缺失的 chunk。
+            raise RuntimeError(
+                f"索引与元数据不一致: faiss={index.ntotal}, chunks={len(chunks)}"
+                f"（source={source}）。请删除 {index_dir} 下该 source 的两个文件后重新入库"
+            )
         obj = cls.__new__(cls)
         obj.source = source
         obj.chunks = chunks

@@ -56,3 +56,5 @@ app/webui/
 
 # LangMate 学习进度数据库（SQLite，运行时生成）
 app/data/
+
+.commit-msg-tmp

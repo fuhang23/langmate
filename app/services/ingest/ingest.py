@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -127,7 +128,8 @@ def _sync_question_vectors(items: list[dict[str, Any]], category: str) -> None:
 
 async def fetch_and_analyze(url: str) -> dict[str, Any]:
     """抓取文章 + 大模型判断（过滤+打标）+ 存 pending，返回预览结果。"""
-    article = fetch_article(url)
+    # 同步 httpx 抓取移出事件循环，避免网关单线程循环被网络 IO 冻结。
+    article = await asyncio.to_thread(fetch_article, url)
     result = await analyze_article(title=article["title"], raw_text=article["raw_text"])
     result = _apply_filter(result)
     result = _apply_dedup(result)
@@ -146,6 +148,9 @@ async def fetch_and_analyze(url: str) -> dict[str, Any]:
         content_type=result.get("content_type", ""),
         summary_title=result.get("summary_title", ""),
     )
+    # 已 confirmed/ignored 的记录 upsert 后状态不回退（防重复入库），
+    # 返回真实状态让前端能提示「该内容已处理过」。
+    saved = store.get(url)
 
     return {
         "url": url,
@@ -160,7 +165,7 @@ async def fetch_and_analyze(url: str) -> dict[str, Any]:
         "content_type": result.get("content_type", ""),
         "items": result["items"],
         "chunks": result["chunks"],
-        "status": "pending",
+        "status": (saved or {}).get("status", "pending"),
     }
 
 
@@ -182,7 +187,8 @@ async def upload_and_prepare(filename: str, content_base64: str) -> dict[str, An
     if len(raw) > _MAX_FILE_SIZE:
         raise RuntimeError(f"文件超过 10MB 上限（当前 {len(raw) // (1024 * 1024)}MB）")
 
-    text = extract_file(filename, raw)
+    # 同步 CPU 密集解析（PDF 逐页抽取）移出事件循环，避免冻结网关。
+    text = await asyncio.to_thread(extract_file, filename, raw)
     if not text.strip():
         raise RuntimeError("未从文件中提取到文本内容")
 
@@ -285,32 +291,46 @@ def confirm_ingest(
         cs = CorpusStore(default_corpus_db_path())
         kept = _filter_items(items, force_items, counts)
         if kept:
-            counts["questions"] = cs.add_writing_questions(kept)
-            _sync_question_vectors(kept, category)
+            # add_* 返回实际插入子集：只对入库项同步向量（避免幽灵向量），
+            # 被 title 幂等跳过的项计入 skipped 而非 questions。
+            inserted = cs.add_writing_questions(kept)
+            counts["questions"] = len(inserted)
+            counts["skipped_questions"] += len(kept) - len(inserted)
+            _sync_question_vectors(inserted, category)
     elif category == "speaking_repeat":
         from services.corpus import CorpusStore, default_corpus_db_path
 
         cs = CorpusStore(default_corpus_db_path())
         kept = _filter_items(items, force_items, counts)
         if kept:
-            counts["questions"] = cs.add_speaking_repeat(kept)
-            _sync_question_vectors(kept, category)
+            inserted = cs.add_speaking_repeat(kept)
+            counts["questions"] = len(inserted)
+            counts["skipped_questions"] += len(kept) - len(inserted)
+            _sync_question_vectors(inserted, category)
     elif category == "speaking_interview":
         from services.corpus import CorpusStore, default_corpus_db_path
 
         cs = CorpusStore(default_corpus_db_path())
         kept = _filter_items(items, force_items, counts)
         if kept:
-            counts["questions"] = cs.add_speaking_interview(kept)
-            _sync_question_vectors(kept, category)
+            inserted = cs.add_speaking_interview(kept)
+            counts["questions"] = len(inserted)
+            counts["skipped_questions"] += len(kept) - len(inserted)
+            _sync_question_vectors(inserted, category)
     elif category == "rag":
         from services.rag import rag_append
 
         rag_chunks = _build_rag_chunks(record)
-        flags = result.get("chunks") or []
+        # flags 与 rag_chunks 用同一过滤条件构造（过滤空 text），
+        # 保证索引一一对齐：LLM 返回含空 chunk 时不错位标重复。
+        flags = [
+            c
+            for c in (result.get("chunks") or [])
+            if isinstance(c, dict) and (c.get("text") or "").strip()
+        ]
         kept = []
         for idx, ch in enumerate(rag_chunks):
-            dup = idx < len(flags) and bool((flags[idx] or {}).get("duplicate"))
+            dup = idx < len(flags) and bool(flags[idx].get("duplicate"))
             if dup and idx not in force_chunks:
                 counts["skipped_chunks"] += 1
                 continue

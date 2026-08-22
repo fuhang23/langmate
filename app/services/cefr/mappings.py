@@ -39,9 +39,10 @@ IELTS_BAND_TO_CEFR: dict[float, CEFRLevel] = {
     4.0: CEFRLevel.B1,
 }
 
-# 内部维度分（0-4）→ CEFR 阈值。0-4 分制与 CEFR 六级对齐：
-# 3.5-4.0 → C1+，2.5-3.4 → B2，1.5-2.4 → B1，0.5-1.4 → A2，<0.5 → A1。
-# C2 仅留给 4.0 且各维度均接近满分的情形（由 dimension_scores_to_cefr 判定）。
+# 内部维度分（0-4）→ CEFR 阈值。0-4 分制与 CEFR 六级对齐（阈值须与
+# _DIMENSION_THRESHOLDS 代码一致，教研口径以代码为准）：
+# >=3.75 → C2，>=3.0 → C1，>=2.25 → B2，>=1.5 → B1，>=0.75 → A2，<0.75 → A1。
+# C2 仅留给接近满分的情形（由 dimension_scores_to_cefr 判定）。
 _DIMENSION_THRESHOLDS: list[tuple[float, CEFRLevel]] = [
     (3.75, CEFRLevel.C2),
     (3.0, CEFRLevel.C1),

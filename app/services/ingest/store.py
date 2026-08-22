@@ -44,7 +44,7 @@ def default_db_path() -> Path:
     env = os.environ.get("LANGMATE_INGEST_DB")
     if env:
         return Path(env)
-    return Path("data") / "ingest.db"
+    return Path(__file__).resolve().parents[2] / "data" / "ingest.db"
 
 
 class IngestStore:
@@ -58,6 +58,9 @@ class IngestStore:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        # WAL + busy_timeout：跨进程（webui 运行中手动跑脚本）并发安全。
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
         return conn
 
     def _init_schema(self) -> None:
@@ -112,9 +115,15 @@ class IngestStore:
                 " ON CONFLICT(url) DO UPDATE SET"
                 " title=excluded.title, source=excluded.source, raw_text=excluded.raw_text,"
                 " category=excluded.category, result_json=excluded.result_json,"
-                " status=excluded.status, kind=excluded.kind, filename=excluded.filename,"
+                # 重新抓取已 confirmed/ignored 的 URL 不回退状态：
+                # confirmed 回退会允许再次 confirm → RAG chunk 重复追加；
+                # ignored 回退会让两阶段状态机失去校验。
+                " status=CASE WHEN ingest_records.status IN ('confirmed','ignored')"
+                " THEN ingest_records.status ELSE excluded.status END,"
+                " kind=excluded.kind, filename=excluded.filename,"
                 " exam=excluded.exam, subject=excluded.subject, content_type=excluded.content_type,"
-                " summary_title=excluded.summary_title, deleted=0",
+                # 逻辑删除标记不因重新抓取而复位（僵尸向量仍按 record_key 过滤）。
+                " summary_title=excluded.summary_title, deleted=ingest_records.deleted",
                 (
                     url, title, source, raw_text, category, result_json, status, now,
                     kind, filename, exam, subject, content_type, summary_title,

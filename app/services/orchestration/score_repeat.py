@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -123,7 +124,9 @@ async def score_repeat(
     try:
         audio_path = tmp_dir / f"recording{ext}"
         audio_path.write_bytes(raw)
-        wav_path = ensure_wav16k(audio_path)
+        # ffmpeg 转换移出事件循环；产物写进 tmp_dir（finally 统一清理，
+        # 不再泄漏到系统临时目录）。
+        wav_path = await asyncio.to_thread(ensure_wav16k, audio_path, out_dir=tmp_dir)
         analysis = await analyze_speech(
             transcript,
             wav_path,

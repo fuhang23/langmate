@@ -33,7 +33,7 @@ def default_db_path() -> Path:
     env = os.environ.get("LANGMATE_FAVORITES_DB")
     if env:
         return Path(env)
-    return Path("data") / "toefl_favorites.db"
+    return Path(__file__).resolve().parents[2] / "data" / "toefl_favorites.db"
 
 
 def extract_example(reference_answer: str, expression: str) -> str:
@@ -77,6 +77,9 @@ class FavoritesStore:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        # WAL + busy_timeout：跨进程并发安全。
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
         return conn
 
     def _init_schema(self) -> None:

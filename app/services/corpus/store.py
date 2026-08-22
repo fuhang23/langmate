@@ -83,11 +83,16 @@ _SENTENCE_RE = re.compile(r"^(\d{1,2})\.\s+(.+)$")
 
 
 def default_corpus_db_path() -> Path:
-    """默认题库 SQLite 文件路径（可用环境变量覆盖）。"""
+    """默认题库 SQLite 文件路径（可用环境变量覆盖）。
+
+    锚定到 app/ 目录（本文件位于 app/services/corpus/）：从任意 CWD 启动
+    网关都指向同一份数据，避免「从别的目录启动→新建一套空库」的
+    题库/进度清空假象。
+    """
     env = os.environ.get("LANGMATE_CORPUS_DB")
     if env:
         return Path(env)
-    return Path("data") / "corpus.db"
+    return Path(__file__).resolve().parents[2] / "data" / "corpus.db"
 
 
 class CorpusStore:
@@ -101,6 +106,10 @@ class CorpusStore:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        # WAL + busy_timeout：跨进程（webui 运行中手动跑导入脚本）并发安全，
+        # 避免 "database is locked" 让脚本中途失败留下半截数据。
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
         return conn
 
     def _init_schema(self) -> None:
@@ -129,67 +138,66 @@ class CorpusStore:
         ]
 
     def import_repeat_docx(self, docx_path: str | Path) -> int:
-        """解析 listen and repeat.docx 并全量入库，返回导入的句子数。
+        """解析 listen and repeat.docx 并入库，返回导入的句子数。
 
         解析规则（结构已核实）：
         - 非编号短行 = 场景标题；
         - 紧跟标题的说明段 = 情景说明（context_prompt）；
         - "N. xxx" 编号行 = 句子，按 '/' 切意群。
+
+        幂等：按场景 title 去重，已存在的场景整组跳过（重复运行不会翻倍，
+        也不破坏已有场景 id 与练习进度的关联）。
         """
         paragraphs = self._extract_paragraphs(docx_path)
 
-        current_scenario_id: int | None = None
-        expecting_context = False
-        imported = 0
-
-        def _new_scenario(title: str) -> int:
-            with self._connect() as conn:
-                cur = conn.execute(
-                    "INSERT INTO repeat_scenario (title, context_prompt)"
-                    " VALUES (?, '')",
-                    (title,),
-                )
-                conn.commit()
-                return int(cur.lastrowid)
-
-        def _set_context(sid: int, context: str) -> None:
-            with self._connect() as conn:
-                conn.execute(
-                    "UPDATE repeat_scenario SET context_prompt = ? WHERE id = ?",
-                    (context, sid),
-                )
-                conn.commit()
-
-        def _add_sentence(sid: int, seq: int, text: str, chunks: list[str]) -> None:
-            with self._connect() as conn:
-                conn.execute(
-                    "INSERT INTO repeat_sentence"
-                    " (scenario_id, seq, text, chunks) VALUES (?, ?, ?, ?)",
-                    (sid, seq, text, json.dumps(chunks, ensure_ascii=False)),
-                )
-                conn.commit()
-
+        # 第一遍：纯解析成组（title + context + sentences），不碰数据库。
+        groups: list[dict[str, Any]] = []
+        cur: dict[str, Any] | None = None
         for para in paragraphs:
             m = _SENTENCE_RE.match(para)
             if m:
-                # 编号句子：只有当前场景存在时才入库。
-                if current_scenario_id is None:
+                if cur is None:
                     continue
                 seq = int(m.group(1))
                 raw = m.group(2).strip()
                 chunks = [c.strip() for c in raw.split("/") if c.strip()]
-                text = " ".join(chunks)
-                _add_sentence(current_scenario_id, seq, text, chunks)
-                imported += 1
-                expecting_context = False
+                cur["sentences"].append((seq, " ".join(chunks), chunks))
             else:
-                # 非编号行：若紧跟在场景标题后则是情景说明；否则是新场景标题。
-                if expecting_context and current_scenario_id is not None:
-                    _set_context(current_scenario_id, para)
-                    expecting_context = False
+                if cur is not None and cur["context"] is None and not cur["sentences"]:
+                    # 紧跟标题的说明段 = 情景说明。
+                    cur["context"] = para
                 else:
-                    current_scenario_id = _new_scenario(para)
-                    expecting_context = True
+                    cur = {"title": para, "context": None, "sentences": []}
+                    groups.append(cur)
+
+        # 第二遍：按 title 幂等入库（已存在的场景整组跳过）。
+        with self._connect() as conn:
+            existing = {
+                r["title"]
+                for r in conn.execute("SELECT title FROM repeat_scenario").fetchall()
+            }
+        imported = 0
+        for g in groups:
+            if not g["sentences"]:
+                continue  # 无句子的空组不入库
+            if g["title"] in existing:
+                continue  # 幂等：已存在场景跳过
+            with self._connect() as conn:
+                cur_ins = conn.execute(
+                    "INSERT INTO repeat_scenario (title, context_prompt)"
+                    " VALUES (?, ?)",
+                    (g["title"], g["context"] or ""),
+                )
+                sid = int(cur_ins.lastrowid)
+                for seq, text, chunks in g["sentences"]:
+                    conn.execute(
+                        "INSERT INTO repeat_sentence"
+                        " (scenario_id, seq, text, chunks) VALUES (?, ?, ?, ?)",
+                        (sid, seq, text, json.dumps(chunks, ensure_ascii=False)),
+                    )
+                conn.commit()
+            existing.add(g["title"])
+            imported += len(g["sentences"])
 
         return imported
 
@@ -350,12 +358,20 @@ class CorpusStore:
                 _reset_question()
                 cur_seq = 0
                 with self._connect() as conn:
-                    cur = conn.execute(
-                        "INSERT INTO interview_topic (title, description) VALUES (?, '')",
-                        (t,),
-                    )
-                    conn.commit()
-                    topic_id = int(cur.lastrowid)
+                    # 幂等：已存在的主题跳过（topic_id=None 让后续题目全部不落库），
+                    # 重复运行脚本不会让题库翻倍，也不破坏主题 id 与进度的关联。
+                    dup = conn.execute(
+                        "SELECT 1 FROM interview_topic WHERE title = ?", (t,)
+                    ).fetchone()
+                    if dup:
+                        topic_id = None
+                    else:
+                        cur = conn.execute(
+                            "INSERT INTO interview_topic (title, description) VALUES (?, '')",
+                            (t,),
+                        )
+                        conn.commit()
+                        topic_id = int(cur.lastrowid)
                 continue
 
             # 新题：## 第 N 题
@@ -595,6 +611,17 @@ class CorpusStore:
                 )
                 imported += 1
             conn.commit()
+
+        # 全量重建后清空该题型的去重向量缓存：旧题干向量已成幽灵（题干可能已
+        # 更新、id 已变），清空后由下次去重检测惰性回填新题干（自愈）。
+        try:
+            from services.dedup.question_embedding import QuestionEmbeddingStore
+
+            QuestionEmbeddingStore().delete_by_category(
+                "writing_email" if task_type == "email" else "writing_discussion"
+            )
+        except Exception:
+            pass  # 缓存清理失败不阻断导入
         return imported
 
     @staticmethod
@@ -824,9 +851,13 @@ class CorpusStore:
 
     # -- 内容采集：结构化 dict 批量入库（幂等） ---------------------------
 
-    def add_writing_questions(self, items: list[dict[str, Any]]) -> int:
-        """批量插入写作题（来自内容采集的大模型输出）。幂等：task_type+title 去重。"""
-        added = 0
+    def add_writing_questions(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """批量插入写作题（来自内容采集的大模型输出）。幂等：task_type+title 去重。
+
+        返回实际插入的 items 子集：调用方据此只对入库项同步题干向量缓存，
+        避免出现「题库无此题、去重缓存却有它的向量」的幽灵向量。
+        """
+        inserted: list[dict[str, Any]] = []
         for it in items:
             task_type = (it.get("task_type") or "").strip()
             title = (it.get("title") or "").strip()
@@ -848,12 +879,15 @@ class CorpusStore:
                     (task_type, title, prompt_en, reference_answer),
                 )
                 conn.commit()
-            added += 1
-        return added
+            inserted.append(it)
+        return inserted
 
-    def add_speaking_repeat(self, items: list[dict[str, Any]]) -> int:
-        """插入跟读场景+句子（来自内容采集）。幂等：scenario title 去重。"""
-        added = 0
+    def add_speaking_repeat(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """插入跟读场景+句子（来自内容采集）。幂等：scenario title 去重。
+
+        返回实际插入的 items 子集（供调用方只对入库项同步向量缓存）。
+        """
+        inserted: list[dict[str, Any]] = []
         for it in items:
             title = (it.get("title") or "").strip()
             sentences = it.get("sentences") or []
@@ -887,12 +921,15 @@ class CorpusStore:
                         (sid, seq, text, json.dumps(chunks, ensure_ascii=False)),
                     )
                 conn.commit()
-            added += 1
-        return added
+            inserted.append(it)
+        return inserted
 
-    def add_speaking_interview(self, items: list[dict[str, Any]]) -> int:
-        """插入面试主题+题（来自内容采集）。幂等：topic title 去重。"""
-        added = 0
+    def add_speaking_interview(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """插入面试主题+题（来自内容采集）。幂等：topic title 去重。
+
+        返回实际插入的 items 子集（供调用方只对入库项同步向量缓存）。
+        """
+        inserted: list[dict[str, Any]] = []
         for it in items:
             title = (it.get("title") or "").strip()
             questions = it.get("questions") or []
@@ -936,8 +973,8 @@ class CorpusStore:
                     ),
                 )
                 conn.commit()
-            added += 1
-        return added
+            inserted.append(it)
+        return inserted
 
     # -- 题库管理：删除/更新（物理删除，子表+主表同事务） -------------------
 

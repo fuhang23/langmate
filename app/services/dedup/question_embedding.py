@@ -32,7 +32,7 @@ def default_db_path() -> Path:
     env = os.environ.get("LANGMATE_DEDUP_DB")
     if env:
         return Path(env)
-    return Path("data") / "dedup.db"
+    return Path(__file__).resolve().parents[2] / "data" / "dedup.db"
 
 
 def question_key(prompt_text: str) -> str:
@@ -50,6 +50,10 @@ class QuestionEmbeddingStore:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        # WAL + busy_timeout：允许 webui 进程与手动导入脚本跨进程并发读写，
+        # 避免 "database is locked" 导致脚本中途失败留下半截数据。
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
         return conn
 
     def _init_schema(self) -> None:
@@ -113,6 +117,19 @@ class QuestionEmbeddingStore:
                 "DELETE FROM question_embedding"
                 " WHERE category = ? AND question_key = ?",
                 (category, question_key(prompt_text)),
+            )
+            conn.commit()
+        return int(cur.rowcount)
+
+    def delete_by_category(self, category: str) -> int:
+        """清空某 category 的全部题干向量缓存，返回删除行数。
+
+        用于 docx 全量重建题库后清掉旧题干向量（否则成幽灵残留误判重复、
+        新题干永远不进缓存漏检）；清空后由下次去重检测自动惰性回填。
+        """
+        with self._connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM question_embedding WHERE category = ?", (category,)
             )
             conn.commit()
         return int(cur.rowcount)

@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from services.llm.deepseek import chat_json
@@ -130,11 +131,13 @@ async def score_writing(
         raise ValueError("student_text 为空")
 
     # RAG 检索用户知识库（写作相关，失败降级为空，不阻断）。
+    # 检索内部是同步 httpx embedding 调用，to_thread 移出事件循环避免冻结网关。
     teaching_chunks: list[Any] = []
     try:
         from services.ingest import search_knowledge_base
 
-        teaching_chunks = search_knowledge_base(
+        teaching_chunks = await asyncio.to_thread(
+            search_knowledge_base,
             query=f"{rubric['task_label']} {prompt_en[:200]}",
             subject="writing",
             top_k=2,

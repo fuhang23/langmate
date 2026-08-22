@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -46,6 +47,10 @@ def _audio_payload(analysis: Any) -> dict[str, Any]:
         payload["problem_phonemes"] = report.problem_phonemes()
         payload["stress_issues"] = report.stress_issues()
     payload["cefr"] = analysis.audio_cefr or {}
+    # 评测失败原因透传（与跟读路径的 assessment_error 行为一致）：
+    # 有道配置缺失/限流时前端能看到原因，而不是只显示 "—"。
+    if getattr(analysis, "error", ""):
+        payload["audio_error"] = analysis.error
     return payload
 
 
@@ -93,7 +98,9 @@ async def score_interview(
     try:
         audio_path = tmp_dir / f"recording{ext}"
         audio_path.write_bytes(raw)
-        wav_path = ensure_wav16k(audio_path)
+        # ffmpeg 转换移出事件循环；产物写进 tmp_dir（finally 统一清理，
+        # 不再泄漏到系统临时目录）。
+        wav_path = await asyncio.to_thread(ensure_wav16k, audio_path, out_dir=tmp_dir)
         analysis = await analyze_speech(transcript, wav_path, reference_text=None)
         audio_payload = _audio_payload(analysis)
     except AudioDecodeError:

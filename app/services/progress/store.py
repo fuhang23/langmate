@@ -46,7 +46,7 @@ def default_db_path() -> Path:
     env = os.environ.get("LANGMATE_PROGRESS_DB")
     if env:
         return Path(env)
-    return Path("data") / "toefl_progress.db"
+    return Path(__file__).resolve().parents[2] / "data" / "toefl_progress.db"
 
 
 class ProgressStore:
@@ -60,6 +60,9 @@ class ProgressStore:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        # WAL + busy_timeout：跨进程（webui 运行中手动跑脚本）并发安全。
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
         return conn
 
     def _init_schema(self) -> None:
@@ -155,11 +158,15 @@ class ProgressStore:
         - count：该题判分事件总次数
         - covered：组内覆盖数（跟读 = 已练句子数、面试 = 已练题数；写作恒为 1）
         空 question_key（agent 对话链路 / 历史记录）不参与统计。
+
+        covered 只统计 question_seq > 0 的记录：只传 question_key 不传
+        sentence_seq 的旧数据（seq=0）不虚增覆盖数（7 句场景不会显示 8/7）。
         """
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT question_key, COUNT(*) AS cnt,"
-                " COUNT(DISTINCT question_seq) AS covered"
+                " COUNT(DISTINCT CASE WHEN question_seq > 0 THEN question_seq END)"
+                " AS covered"
                 " FROM practice_records WHERE question_key != ''"
                 " GROUP BY question_key"
             ).fetchall()

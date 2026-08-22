@@ -31,6 +31,16 @@ def main() -> int:
     store = CorpusStore(default_corpus_db_path())
     imported = store.import_repeat_docx(docx_path)
 
+    # 同步去重向量缓存：新入库场景的题干即刻进缓存。
+    # （惰性回填只在缓存为空时触发；缓存非空但缺新题会导致去重漏检。）
+    try:
+        from services.dedup import backfill_question_embeddings
+
+        backfill_question_embeddings("speaking_repeat")
+        print("[缓存] 去重向量缓存已同步")
+    except Exception as exc:
+        print(f"[缓存] 去重向量缓存同步失败（不影响题库）：{exc}")
+
     scenarios = store.list_scenarios()
     print(f"导入完成：{imported} 句，{len(scenarios)} 个场景")
     print(f"数据库文件：{store.db_path}")

@@ -53,6 +53,11 @@ def _get_old_item(cs, category: str, question_id: int) -> dict[str, Any] | None:
     wq = cs.get_writing_question(question_id)
     if wq is None:
         return None
+    # 两题型共用 writing_question 表：id 归属校验，防止「email 界面传
+    # discussion 题的 id」把题静默跨题型搬家/误删另一题型的列表项。
+    expected_task = "email" if category == "writing_email" else "discussion"
+    if wq.task_type != expected_task:
+        return None
     return {
         "task_type": wq.task_type,
         "title": wq.title,

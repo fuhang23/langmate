@@ -132,15 +132,23 @@ def _parse_report(payload: dict[str, Any], text: str) -> PronunciationReport:
         except (TypeError, ValueError):
             return 0.0
 
+    def _pf(p: dict[str, Any], key: str) -> float:
+        """音素/词级字段安全转 float：有道偶发返回 "N/A" 等非数值，
+        单字段解析失败置 0，不让整份报告降级成纯文字模式。"""
+        try:
+            return float(p.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
     words: list[WordResult] = []
     for w in payload.get("words") or []:
         phonemes = [
             PhonemeResult(
                 phoneme=str(p.get("phoneme") or ""),
-                pronunciation=float(p.get("pronunciation") or 0),
+                pronunciation=_pf(p, "pronunciation"),
                 correct=bool(p.get("judge", True)),
                 calibration=str(p.get("calibration") or ""),
-                prominence=float(p.get("prominence") or 0),
+                prominence=_pf(p, "prominence"),
                 stress_ref=bool(p.get("stress_ref", False)),
                 stress_detect=bool(p.get("stress_detect", False)),
             )
@@ -149,7 +157,7 @@ def _parse_report(payload: dict[str, Any], text: str) -> PronunciationReport:
         words.append(WordResult(
             word=str(w.get("word") or ""),
             ipa=str(w.get("IPA") or ""),
-            pronunciation=float(w.get("pronunciation") or 0),
+            pronunciation=_pf(w, "pronunciation"),
             phonemes=phonemes,
         ))
 

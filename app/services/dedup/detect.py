@@ -111,6 +111,8 @@ def _backfill(category: str, qe: QuestionEmbeddingStore) -> None:
         vectors = embed_bailian.embed_texts(prompts)
     except Exception:
         return
+    if len(vectors) != len(prompts):
+        return  # API 少返回向量时整体放弃，避免 zip 截断导致部分题干漏缓存
     for prompt, vec in zip(prompts, vectors):
         qe.upsert(category, prompt, vec)
 
@@ -146,20 +148,31 @@ def detect_question_duplicates(
 
     try:
         new_vecs = np.asarray(embed_bailian.embed_texts(prompts), dtype=np.float32)
+        if new_vecs.ndim != 2 or new_vecs.shape[0] != len(prompts):
+            return results  # API 返回向量数与 prompts 不一致 → 降级为不重复
     except Exception:
         return results
-    faiss.normalize_L2(new_vecs)
+    try:
+        faiss.normalize_L2(new_vecs)
 
-    existing_mat = np.asarray([e["embedding"] for e in existing], dtype=np.float32)
-    faiss.normalize_L2(existing_mat)
+        existing_mat = np.asarray([e["embedding"] for e in existing], dtype=np.float32)
+        if existing_mat.ndim != 2 or existing_mat.shape[0] == 0:
+            return results  # 缓存向量缺失/为空 → 降级为不重复
+        if new_vecs.shape[1] != existing_mat.shape[1]:
+            # 维度不匹配（更换 embedding 模型/维度后新旧缓存混存）→ 降级，
+            # 避免矩阵乘法 ValueError 打挂录题/编辑接口。
+            return results
+        faiss.normalize_L2(existing_mat)
 
-    sims = new_vecs @ existing_mat.T  # (n_new, n_existing)，内积即余弦相似度
-    for i in range(len(items)):
-        if not prompts[i] or sims.shape[1] == 0:
-            continue
-        max_sim = float(sims[i].max())
-        results[i]["similarity"] = round(max_sim, 4)
-        results[i]["duplicate"] = max_sim >= threshold
+        sims = new_vecs @ existing_mat.T  # (n_new, n_existing)，内积即余弦相似度
+        for i in range(len(items)):
+            if not prompts[i] or sims.shape[1] == 0 or i >= sims.shape[0]:
+                continue
+            max_sim = float(sims[i].max())
+            results[i]["similarity"] = round(max_sim, 4)
+            results[i]["duplicate"] = max_sim >= threshold
+    except Exception:
+        return results  # 归一化/矩阵运算异常 → 降级为不重复，不打挂调用方
     return results
 
 
@@ -173,6 +186,18 @@ def sync_question_embeddings(items: list[dict], category: str) -> None:
         vectors = embed_bailian.embed_texts(valid)
     except Exception:
         return
+    if len(vectors) != len(valid):
+        return  # API 少返回向量时整体放弃，避免 zip 截断导致尾部题干漏缓存
     qe = QuestionEmbeddingStore()
     for prompt, vec in zip(valid, vectors):
         qe.upsert(category, prompt, vec)
+
+
+def backfill_question_embeddings(category: str) -> None:
+    """从题库全量回填某 category 的题干向量缓存（幂等，失败静默降级）。
+
+    供 docx 导入脚本在增量入库后调用：新题目即刻进缓存，避免
+    「缓存非空但缺新题」导致去重漏检（惰性回填只在缓存为空时触发）。
+    """
+    qe = QuestionEmbeddingStore()
+    _backfill(category, qe)
