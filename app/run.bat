@@ -2,27 +2,30 @@
 setlocal
 cd /d "%~dp0"
 
-REM ===== 1) 加载 .env 到当前进程环境变量（跳过 # 注释与空行）=====
+REM ===== 1) Load .env into environment (skip # comments and blank lines) =====
 for /f "usebackq eol=# tokens=1,* delims==" %%a in (".env") do (
     if not "%%a"=="" set "%%a=%%b"
 )
 
-REM ===== 2) 激活 langmate 环境 =====
+REM ===== 2) Activate langmate conda env =====
 call conda activate langmate
 
-REM ===== 3) 构建前端（editable 安装不会自动打包 dist；改了前端代码就必须 build）=====
-REM     以后若前端没改动、想快速启动，可把下面 4 行注释掉
+REM ===== 3) Build frontend (editable install does not bundle dist) =====
+REM     Comment out the lines from pushd to popd below if the frontend is unchanged.
 pushd nanobot\webui
+REM Clear the previous dist first, so vite's emptyOutDir never trips a
+REM bulk-delete guard (e.g. IDE safe-delete) on a large assets folder.
+if exist "..\nanobot\web\dist" rmdir /s /q "..\nanobot\web\dist"
 call npm run build
 if errorlevel 1 (
-    echo [错误] 前端构建失败，请先修复 TS 报错再重试。
+    echo [ERROR] Frontend build failed. Fix the TypeScript errors above and retry.
     popd
     pause
     exit /b 1
 )
 popd
 
-REM ===== 4) 启动（不要套 conda run，否则看不到实时日志）=====
+REM ===== 4) Start server (do not wrap with conda run, to keep live logs visible) =====
 nanobot webui -c config.json
 
 endlocal

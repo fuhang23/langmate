@@ -16,7 +16,6 @@ from typing import Any
 
 from services.llm.deepseek import chat_json
 from services.progress import PracticeRecord, ProgressStore, default_db_path
-from services.rag import rag_search
 from services.writing.rubrics import rubric_for
 
 
@@ -122,15 +121,18 @@ async def score_writing(
     if not student_text or not student_text.strip():
         raise ValueError("student_text 为空")
 
-    # RAG 检索 lesson-plan 教学法（失败降级为空，不阻断）。
+    # RAG 检索用户知识库（写作相关，失败降级为空，不阻断）。
+    teaching_chunks: list[Any] = []
     try:
-        teaching_chunks = rag_search(
-            query=f"{rubric['task_label']} 教学法 写作技巧",
-            source="lesson-plan-writing",
+        from services.ingest import search_knowledge_base
+
+        teaching_chunks = search_knowledge_base(
+            query=f"{rubric['task_label']} {prompt_en[:200]}",
+            subject="writing",
             top_k=2,
         )
     except Exception:
-        teaching_chunks = []
+        pass
     teaching = _format_teaching_chunks(teaching_chunks)
 
     data = await chat_json(

@@ -7,6 +7,6 @@
 from __future__ import annotations
 
 from services.rag.schema import Chunk
-from services.rag.search import rag_append, rag_search
+from services.rag.search import rag_append, rag_rebuild, rag_search
 
-__all__ = ["Chunk", "rag_search", "rag_append"]
+__all__ = ["Chunk", "rag_search", "rag_append", "rag_rebuild"]

@@ -11,7 +11,7 @@ from typing import Any
 
 import httpx
 
-DEFAULT_MODEL = "text-embedding-v4"
+DEFAULT_MODEL = "qwen3.7-text-embedding"
 DEFAULT_DIM = 1024
 DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
@@ -44,10 +44,9 @@ def _embed(texts: list[str]) -> list[list[float]]:
         "model": _model(),
         "input": texts,
         "encoding_format": "float",
+        # qwen3.7-text-embedding 支持自定义维度（256~2560），显式指定保证维度确定。
+        "dimensions": _dim(),
     }
-    # text-embedding-v4 支持显式维度，仅当配置与默认不同时才传。
-    if _dim() != DEFAULT_DIM:
-        body["dimensions"] = _dim()
     resp = httpx.post(
         f"{_base_url()}/embeddings",
         headers={

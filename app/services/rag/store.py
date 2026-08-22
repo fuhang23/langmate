@@ -58,18 +58,33 @@ class RagIndex:
     def save(self, index_dir: str | Path) -> None:
         index_dir = Path(index_dir)
         index_dir.mkdir(parents=True, exist_ok=True)
-        faiss.write_index(self.index, str(index_dir / f"{self.source}.faiss"))
+        faiss_path = index_dir / f"{self.source}.faiss"
+        meta_path = index_dir / f"{self.source}.json"
+        # 先写临时文件再原子重命名，避免中途崩溃导致索引与元数据损坏/不一致。
+        tmp_faiss = index_dir / f"{self.source}.faiss.tmp"
+        tmp_meta = index_dir / f"{self.source}.json.tmp"
+        faiss.write_index(self.index, str(tmp_faiss))
         payload = [c.to_dict() for c in self.chunks]
-        (index_dir / f"{self.source}.json").write_text(
-            json.dumps(payload, ensure_ascii=False), encoding="utf-8"
-        )
+        tmp_meta.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp_faiss, faiss_path)
+        os.replace(tmp_meta, meta_path)
 
     @classmethod
     def load(cls, source: str, index_dir: str | Path) -> "RagIndex":
         index_dir = Path(index_dir)
         idx_path = index_dir / f"{source}.faiss"
         meta_path = index_dir / f"{source}.json"
-        if not idx_path.exists() or not meta_path.exists():
+        idx_exists = idx_path.exists()
+        meta_exists = meta_path.exists()
+        # 两者都不存在 → 正常首次创建；只有一个存在 → 视为损坏，明确报错
+        # （而非静默重建覆盖尚存的那个文件，防止数据丢失）。
+        if idx_exists != meta_exists:
+            raise RuntimeError(
+                f"索引文件不完整（faiss={idx_exists}, json={meta_exists}）："
+                f"{idx_path.name} 与 {meta_path.name} 应同时存在。"
+                f"请手动补齐或删除 {index_dir} 下该 source 的两个文件后重新入库"
+            )
+        if not idx_exists:
             raise FileNotFoundError(f"索引不存在: {source}（先运行 ingest）")
         index = faiss.read_index(str(idx_path))
         chunks = [Chunk.from_dict(d) for d in json.loads(meta_path.read_text(encoding="utf-8"))]

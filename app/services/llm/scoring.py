@@ -58,6 +58,22 @@ async def score_content(
     Raises:
         RuntimeError: LLM 调用失败。
     """
+    # RAG 检索用户知识库（口语相关，失败降级为空，不阻断评分）。
+    system = _SYSTEM
+    try:
+        from services.ingest import search_knowledge_base
+
+        chunks = search_knowledge_base(
+            query=question_prompt,
+            subject="speaking",
+            top_k=2,
+        )
+        if chunks:
+            rag_text = "\n\n".join(f"{c.source_label()}\n{c.text[:600]}" for c in chunks)
+            system += f"\n\n## 参考的备考知识（可引用，用于增强评分依据）\n{rag_text}"
+    except Exception:
+        pass
+
     user = (
         f"面试题目：\n{question_prompt}\n\n"
         f"考生的作答（转写文本）：\n{transcript}\n\n"
@@ -65,7 +81,7 @@ async def score_content(
     )
     data = await chat_json(
         [
-            {"role": "system", "content": _SYSTEM},
+            {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
         temperature=0.2,
