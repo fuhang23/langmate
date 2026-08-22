@@ -25,14 +25,14 @@
         "originMetadata": {}
       },
       "state": {
-        "nextRunAtMs": 1787373998023,
+        "nextRunAtMs": 1787384260858,
         "lastRunAtMs": null,
         "lastStatus": null,
         "lastError": null,
         "runHistory": []
       },
-      "createdAtMs": 1787366798004,
-      "updatedAtMs": 1787366798004,
+      "createdAtMs": 1787377060847,
+      "updatedAtMs": 1787377060847,
       "deleteAfterRun": false
     },
     {
@@ -59,14 +59,21 @@
         "originMetadata": {}
       },
       "state": {
-        "nextRunAtMs": 1787368598023,
-        "lastRunAtMs": null,
-        "lastStatus": null,
+        "nextRunAtMs": 1787380660876,
+        "lastRunAtMs": 1787378860874,
+        "lastStatus": "ok",
         "lastError": null,
-        "runHistory": []
+        "runHistory": [
+          {
+            "runAtMs": 1787378860874,
+            "status": "ok",
+            "durationMs": 2,
+            "error": null
+          }
+        ]
       },
-      "createdAtMs": 1787366798012,
-      "updatedAtMs": 1787366798012,
+      "createdAtMs": 1787377060852,
+      "updatedAtMs": 1787378860876,
       "deleteAfterRun": false
     }
   ]

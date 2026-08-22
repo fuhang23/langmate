@@ -70,11 +70,67 @@ def _build_rag_chunks(record: dict[str, Any]) -> list[Any]:
     ]
 
 
+def _apply_dedup(result: dict[str, Any]) -> dict[str, Any]:
+    """对判断结果做去重检测，给 items/chunks 标记 duplicate/similarity。
+
+    - rag：RAG chunk 去重（与知识库已有 chunk 比较）
+    - 题目类：题目题干去重（与题库已有题比较）
+    去重失败降级为不重复（detect 内部已兜底）。
+    """
+    from services.dedup import detect_question_duplicates, detect_rag_duplicates
+
+    category = result["category"]
+    if category == "rag":
+        chunks = result.get("chunks") or []
+        texts = [(c.get("text") or "") if isinstance(c, dict) else "" for c in chunks]
+        marks = detect_rag_duplicates(texts)
+        for c, m in zip(chunks, marks):
+            if isinstance(c, dict):
+                c["duplicate"] = m["duplicate"]
+                c["similarity"] = m["similarity"]
+    elif category in (
+        "writing_discussion",
+        "writing_email",
+        "speaking_repeat",
+        "speaking_interview",
+    ):
+        items = result.get("items") or []
+        marks = detect_question_duplicates(items, category)
+        for it, m in zip(items, marks):
+            if isinstance(it, dict):
+                it["duplicate"] = m["duplicate"]
+                it["similarity"] = m["similarity"]
+    return result
+
+
+def _filter_items(
+    items: list[dict[str, Any]],
+    force_indices: set[int],
+    counts: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """过滤掉 duplicate 且未强制的题目 item，统计 skipped_questions。"""
+    kept: list[dict[str, Any]] = []
+    for idx, it in enumerate(items):
+        if it.get("duplicate") and idx not in force_indices:
+            counts["skipped_questions"] += 1
+            continue
+        kept.append(it)
+    return kept
+
+
+def _sync_question_vectors(items: list[dict[str, Any]], category: str) -> None:
+    """确认入库成功后，把新题题干向量写入缓存表（供后续去重复用）。"""
+    from services.dedup import sync_question_embeddings
+
+    sync_question_embeddings(items, category)
+
+
 async def fetch_and_analyze(url: str) -> dict[str, Any]:
     """抓取文章 + 大模型判断（过滤+打标）+ 存 pending，返回预览结果。"""
     article = fetch_article(url)
     result = await analyze_article(title=article["title"], raw_text=article["raw_text"])
     result = _apply_filter(result)
+    result = _apply_dedup(result)
 
     store = IngestStore()
     store.upsert(
@@ -151,6 +207,10 @@ async def upload_and_prepare(filename: str, content_base64: str) -> dict[str, An
         if not chunks:
             raise RuntimeError("未从文件中提取到可入库的文本内容")
 
+    # RAG chunk 去重检测（文件上传为纯 RAG）
+    if chunks:
+        _apply_dedup({"category": "rag", "chunks": chunks})
+
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
     key = f"file://{digest}"
 
@@ -190,11 +250,19 @@ async def upload_and_prepare(filename: str, content_base64: str) -> dict[str, An
     }
 
 
-def confirm_ingest(key: str) -> dict[str, Any]:
+def confirm_ingest(
+    key: str,
+    force_item_indices: list[int] | None = None,
+    force_chunk_indices: list[int] | None = None,
+) -> dict[str, Any]:
     """确认入库：按 category 写入题库 / RAG，更新 status=confirmed。
 
     key 是 ingest_records.url（链接导入为文章 URL，文件上传为 file://<hash>）。
+    duplicate=true 且不在强制列表的 item/chunk 会被跳过。
     """
+    force_items = set(force_item_indices or [])
+    force_chunks = set(force_chunk_indices or [])
+
     store = IngestStore()
     record = store.get(key)
     if record is None or record["status"] != "pending":
@@ -204,29 +272,51 @@ def confirm_ingest(key: str) -> dict[str, Any]:
     category = result["category"]
     items = result.get("items") or []
 
-    counts: dict[str, Any] = {"questions": 0, "chunks": 0}
+    counts: dict[str, Any] = {
+        "questions": 0,
+        "chunks": 0,
+        "skipped_questions": 0,
+        "skipped_chunks": 0,
+    }
 
     if category in ("writing_discussion", "writing_email"):
         from services.corpus import CorpusStore, default_corpus_db_path
 
         cs = CorpusStore(default_corpus_db_path())
-        counts["questions"] = cs.add_writing_questions(items)
+        kept = _filter_items(items, force_items, counts)
+        if kept:
+            counts["questions"] = cs.add_writing_questions(kept)
+            _sync_question_vectors(kept, category)
     elif category == "speaking_repeat":
         from services.corpus import CorpusStore, default_corpus_db_path
 
         cs = CorpusStore(default_corpus_db_path())
-        counts["questions"] = cs.add_speaking_repeat(items)
+        kept = _filter_items(items, force_items, counts)
+        if kept:
+            counts["questions"] = cs.add_speaking_repeat(kept)
+            _sync_question_vectors(kept, category)
     elif category == "speaking_interview":
         from services.corpus import CorpusStore, default_corpus_db_path
 
         cs = CorpusStore(default_corpus_db_path())
-        counts["questions"] = cs.add_speaking_interview(items)
+        kept = _filter_items(items, force_items, counts)
+        if kept:
+            counts["questions"] = cs.add_speaking_interview(kept)
+            _sync_question_vectors(kept, category)
     elif category == "rag":
         from services.rag import rag_append
 
         rag_chunks = _build_rag_chunks(record)
-        if rag_chunks:
-            counts["chunks"] = rag_append(_INGEST_RAG_SOURCE, rag_chunks)
+        flags = result.get("chunks") or []
+        kept = []
+        for idx, ch in enumerate(rag_chunks):
+            dup = idx < len(flags) and bool((flags[idx] or {}).get("duplicate"))
+            if dup and idx not in force_chunks:
+                counts["skipped_chunks"] += 1
+                continue
+            kept.append(ch)
+        if kept:
+            counts["chunks"] = rag_append(_INGEST_RAG_SOURCE, kept)
 
     store.set_status(key, "confirmed")
     counts["status"] = "confirmed"

@@ -765,6 +765,62 @@ class CorpusStore:
             ).fetchone()
         return int(row["cnt"]) if row else 0
 
+    def iter_questions_for_dedup(self, category: str) -> list[str]:
+        """按 category 列出所有题目的「题干文本」，供去重检测/回填。
+
+        category 取值：writing_discussion / writing_email / speaking_repeat
+        / speaking_interview。题干构造规则与去重检测一致：
+        - writing：单题 prompt_en
+        - speaking_repeat：每个场景 7 句拼接成一段
+        - speaking_interview：每个主题 4 题 prompt_en 拼接成一段
+        """
+        if category == "writing_discussion":
+            task_type = "discussion"
+        elif category == "writing_email":
+            task_type = "email"
+        else:
+            task_type = ""
+
+        with self._connect() as conn:
+            if task_type:
+                rows = conn.execute(
+                    "SELECT prompt_en FROM writing_question WHERE task_type = ? ORDER BY id ASC",
+                    (task_type,),
+                ).fetchall()
+                return [r["prompt_en"].strip() for r in rows if r["prompt_en"] and r["prompt_en"].strip()]
+
+            if category == "speaking_repeat":
+                prompts: list[str] = []
+                scenarios = conn.execute(
+                    "SELECT id FROM repeat_scenario ORDER BY id ASC"
+                ).fetchall()
+                for sc in scenarios:
+                    sents = conn.execute(
+                        "SELECT text FROM repeat_sentence WHERE scenario_id = ? ORDER BY seq ASC",
+                        (sc["id"],),
+                    ).fetchall()
+                    text = " ".join(s["text"].strip() for s in sents if s["text"] and s["text"].strip())
+                    if text:
+                        prompts.append(text)
+                return prompts
+
+            if category == "speaking_interview":
+                prompts = []
+                topics = conn.execute(
+                    "SELECT id FROM interview_topic ORDER BY id ASC"
+                ).fetchall()
+                for tp in topics:
+                    qs = conn.execute(
+                        "SELECT prompt_en FROM interview_question WHERE topic_id = ? ORDER BY seq ASC",
+                        (tp["id"],),
+                    ).fetchall()
+                    text = " ".join(q["prompt_en"].strip() for q in qs if q["prompt_en"] and q["prompt_en"].strip())
+                    if text:
+                        prompts.append(text)
+                return prompts
+
+        return []
+
     # -- 内容采集：结构化 dict 批量入库（幂等） ---------------------------
 
     def add_writing_questions(self, items: list[dict[str, Any]]) -> int:

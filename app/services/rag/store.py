@@ -38,13 +38,26 @@ class RagIndex:
 
     def search(self, query_vec: np.ndarray, top_k: int = 3) -> list[Chunk]:
         """返回与 query 向量最相似的 top_k 个 chunk（按相似度降序）。"""
+        return [c for c, _ in self.search_with_scores(query_vec, top_k)]
+
+    def search_with_scores(
+        self, query_vec: np.ndarray, top_k: int = 3
+    ) -> list[tuple[Chunk, float]]:
+        """返回与 query 向量最相似的 top_k 个 (chunk, 相似度)，按相似度降序。
+
+        相似度为归一化向量的内积（= 余弦相似度，范围 -1~1）。供去重检测使用。
+        """
         if len(self.chunks) == 0 or self.index.ntotal == 0:
             return []
         q = np.asarray(query_vec, dtype=np.float32).reshape(1, -1)
         faiss.normalize_L2(q)
         top_k = min(top_k, len(self.chunks))
-        _, labels = self.index.search(q, top_k)
-        return [self.chunks[int(i)] for i in labels[0] if i >= 0]
+        distances, labels = self.index.search(q, top_k)
+        result: list[tuple[Chunk, float]] = []
+        for score, i in zip(distances[0], labels[0]):
+            if i >= 0:
+                result.append((self.chunks[int(i)], float(score)))
+        return result
 
     def append(self, vectors: np.ndarray, chunks: list[Chunk]) -> None:
         """追加新向量与 chunk（faiss index.add 增量追加，不重建已有向量）。"""
