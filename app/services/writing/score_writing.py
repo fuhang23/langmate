@@ -7,7 +7,7 @@
 4. useful_expressions：从参考范文提取的地道表达（含中文释义+例句）。
 
 判分时：rubric 全文注入 system prompt（结构化，不走 RAG）；
-长文档 lesson-plan-writing 走 RAG 检索，增强教学法反馈。
+用户知识库（ingested-articles，subject=writing）走 RAG 检索，增强教学法反馈。
 """
 
 from __future__ import annotations
